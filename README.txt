@@ -126,4 +126,4 @@ History/Favorites gone    → history.json, favorites.json, or config.json delet
 App won't start           → Missing PyGObject / GTK4 packages
 
 Enjoy your portable TTS control!
-kinoko – Nova Friburgo, RJ – 2026
+Zeppyrae 2026
