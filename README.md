@@ -6,6 +6,12 @@ A simple, self-contained, portable graphical interface for Piper TTS
 
 https://github.com/rhasspy/piper
 
+If you want to study how the code works in depth, see:
+
+- [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md)
+
+That file explains the app flow, backend, frontend, and data files in detail.
+
 This application is intentionally designed to be fully portable:
 - Just copy the entire folder anywhere
 - Place your voice models (*.onnx + *.onnx.json) in the voices/ subfolder
