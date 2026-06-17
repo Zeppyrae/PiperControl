@@ -1,9 +1,18 @@
 [Desktop Entry]
-Type=Application
-Name=Piper_Control
+Categories=AudioVideo;Audio;Utility;
+Comment[en_US]=Portable browser-based Piper TTS controller
 Comment=Portable browser-based Piper TTS controller
 Exec=sh -c 'cd "$(dirname "$1")" && exec python3 -u main.py' sh %k
-Icon=assets/icon.png
-Terminal=false
-Categories=AudioVideo;Audio;Utility;
+GenericName[en_US]=
+GenericName=
+Icon=/home/moonlitmara/Desktop/Piper_Control-main/assets/icon.png
+MimeType=
+Name[en_US]=Piper_Control
+Name=Piper_Control
+Path=
 StartupNotify=true
+Terminal=false
+TerminalOptions=
+Type=Application
+X-KDE-SubstituteUID=false
+X-KDE-Username=

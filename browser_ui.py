@@ -367,6 +367,11 @@ class BrowserApp:
                 self.settings["sentence_silence"] = float(data["sentence_silence"])
             except (TypeError, ValueError):
                 pass
+        if "volume" in data:
+            try:
+                self.settings["volume"] = float(data["volume"])
+            except (TypeError, ValueError):
+                pass
         if "output_device" in data:
             self.settings["output_device"] = data["output_device"]
             self.add_recent_device(data["output_device"])

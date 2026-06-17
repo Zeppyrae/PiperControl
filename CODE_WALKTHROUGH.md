@@ -7,17 +7,22 @@ rather than only describing features.
 ## Big Picture
 
 This project is a browser-based control panel for Piper TTS.
-Piper is an offline text-to-speech system. This repo does not implement speech synthesis itself.
-Instead, it:
+Piper is an offline text-to-speech system. This repo does not implement speech
+synthesis itself. Instead, the app acts like a small local control center:
 
 1. Starts a small local Python web server.
-2. Serves a single HTML page with JavaScript UI.
+2. Serves a browser UI split across HTML, CSS, and JavaScript files.
 3. Accepts HTTP requests from the UI.
 4. Calls external command-line tools like `piper-tts`, `pw-play`, `paplay`, and `pactl`.
 5. Stores user preferences and history in local JSON files.
 
-The code is intentionally compact and uses only the Python standard library on the backend.
-That makes it a good learning project because you can study:
+If you open the repo in a file manager, the main entry points are:
+
+- `Piper_Control.desktop` for a click-to-launch shortcut
+- `main.py` for the actual command-line startup path
+
+The code is intentionally compact and uses only the Python standard library on
+the backend. That makes it a good learning project because you can study:
 
 - HTTP servers
 - JSON persistence
@@ -33,6 +38,9 @@ Main files:
 - `Piper_Control.desktop` - icon-based launcher that starts `main.py` and points at `assets/icon.png`
 - `main.py` - command-line entry point
 - `browser_ui.py` - main app, HTTP API, and generated HTML/JS UI
+- `static/index.html` - browser UI markup
+- `static/styles.css` - browser UI styling
+- `static/app.js` - browser UI behavior
 - `engine.py` - launches Piper TTS and audio playback
 - `settings.py` - loads and saves config values
 - `utils.py` - helper functions for voices and audio sinks
@@ -62,11 +70,13 @@ If you want to study the code in a useful order, follow this path:
 3. `engine.py`
 4. `settings.py`
 5. `utils.py`
-6. Historical note: older versions of this repo included `web_control.py`, but it is no longer present
+6. `static/index.html`
+7. `static/styles.css`
+8. `static/app.js`
 
 ## Execution Flow
 
-When you run:
+When you run the app from `main.py` or launch it through `Piper_Control.desktop`:
 
 ```bash
 python3 -u main.py
@@ -79,7 +89,7 @@ the flow is:
 3. `BrowserApp(port=...)` loads saved settings and local state.
 4. `BrowserApp.run()` starts the threaded HTTP server.
 5. The app opens your browser to the local UI.
-6. The browser page makes API requests back to Python.
+6. The browser page asks the backend for voices, sinks, history, and saved data.
 7. When you press "Speak", the backend starts a thread that runs Piper and playback commands.
 
 So the Python program is both:
@@ -134,14 +144,17 @@ It contains:
 
 ### `get_local_ip()`
 
-This function tries to discover the computer's LAN IP address by:
+This function figures out the computer's LAN IP address by asking the operating
+system which local address it would use to reach the internet.
+
+It does that by:
 
 1. creating a UDP socket
-2. connecting to `8.8.8.8` on port `80`
-3. reading the socket's own local address
+2. connecting it to `8.8.8.8` on port `80`
+3. reading the socket's local address
 
-It does not actually send traffic to Google DNS in a normal way.
-It uses that address as a trick so the OS chooses the outbound interface.
+That connection is only used as a hint for the OS. It does not send real
+traffic to Google DNS.
 
 If anything fails, it falls back to `127.0.0.1`.
 
@@ -154,25 +167,27 @@ The app prints both:
 
 ## Part 2: `BrowserRequestHandler`
 
-This class subclasses `http.server.BaseHTTPRequestHandler`.
-That means each browser request gets routed into methods like:
+This class is the bridge between the browser and the app.
+It inherits from `http.server.BaseHTTPRequestHandler`, so each request gets
+routed into methods like:
 
 - `do_GET()`
 - `do_POST()`
 
-The handler is initialized with `app=self`, so it can access the shared `BrowserApp` instance.
+The handler is initialized with `app=self`, so it can reach the shared
+`BrowserApp` instance.
 
 ### Important idea
 
-The handler itself does not own the real state.
+The handler does not own the real state.
 It just receives HTTP requests and forwards them into the app object.
-This is a common pattern in Python web code.
+That keeps request handling separate from app logic.
 
 ### GET routes
 
 #### `/`
 
-Returns the full HTML page from `self.app.html_page()`.
+Serves the main HTML page for the app.
 
 #### `/api/status`
 
@@ -184,19 +199,19 @@ Returns JSON containing:
 - local IP
 - current port
 
-This is how the frontend learns what to display.
+The frontend uses this data to build its dropdowns and restore settings.
 
 #### `/api/history`
 
-Returns the history list.
+Returns the saved history entries.
 
 #### `/api/favorites`
 
-Returns saved favorites.
+Returns the saved favorites.
 
 #### `/api/presets`
 
-Returns saved presets.
+Returns the saved presets.
 
 #### `/api/recents`
 
@@ -206,8 +221,7 @@ Returns the recent voice and device selections.
 
 #### `/api/speak`
 
-Reads request data, updates settings, and starts speech.
-
+Reads the request data, updates settings, and starts speech.
 The request can be JSON or form-style data.
 
 #### `/api/stop`
@@ -262,11 +276,11 @@ This suppresses the default noisy HTTP log messages.
 
 ## Part 3: `BrowserApp`
 
-This is the real application state object.
+This is the main application object.
 
 ### Constructor: `__init__`
 
-On startup, the app loads:
+When the app starts, it loads:
 
 - settings from `config.json`
 - voice engine object
@@ -275,7 +289,7 @@ On startup, the app loads:
 - presets from `presets.json`
 - recent selections from `recents.json`
 
-This means most user state survives program restarts.
+That means most user state survives program restarts.
 
 ### Why use a class here
 
@@ -287,14 +301,13 @@ The class groups all app-related state together:
 - saved data
 
 Instead of using many global variables, the state lives inside one object.
-
-That is a clean Python design for a small application.
+That makes the code easier to follow.
 
 ## Persistence Methods
 
 ### `load_history()` / `save_history()`
 
-History is loaded from `history.json`.
+History comes from `history.json`.
 
 Only valid items are kept:
 
@@ -370,6 +383,7 @@ It updates fields like:
 - `noise`
 - `noise_w`
 - `sentence_silence`
+- `volume`
 - `output_device`
 - `mute`
 
@@ -449,24 +463,19 @@ This method is the bridge between the command-line program and the browser exper
 
 ## `html_page()`
 
-This method returns one giant HTML string.
+This method reads and returns the main HTML file from `static/index.html`.
 
-That HTML string includes:
+That page loads the rest of the frontend from:
 
-- CSS styling
-- the visible UI
-- all client-side JavaScript
+- `static/styles.css`
+- `static/app.js`
 
-This is an important design choice:
-
-- instead of loading separate `.html`, `.css`, and `.js` files
-- the app embeds everything into one Python string
-
-That makes the repo smaller, but harder to maintain.
+This keeps the browser UI split into normal web files, which is easier to read
+and maintain.
 
 ## Frontend Structure
 
-The page has:
+The page is made of a few clear pieces:
 
 - a sidebar for presets, recents, history, favorites
 - a main card with text input and controls
@@ -475,8 +484,8 @@ The page has:
 
 ### Why the frontend matters
 
-The browser is not just "a display".
-It is an active client that calls the backend API.
+The browser is not just "a display". It is an active client that calls the
+backend API.
 
 The page fetches data from `/api/...` routes and sends user actions back to the server.
 
@@ -488,7 +497,7 @@ The JavaScript is worth studying because it mirrors the backend state.
 
 Short helper for `document.getElementById(id)`.
 
-This is a nice example of making code shorter without changing behavior.
+This is a nice example of making the code shorter without changing behavior.
 
 ### `setStatus(msg)`
 
@@ -650,7 +659,7 @@ This is a good example of event handling in browser JavaScript.
 This file is the bridge between the app and the external Piper tools.
 
 It does not synthesize speech itself.
-It builds shell commands and runs them.
+It turns settings into command-line calls, runs them, and plays the result.
 
 ## `PiperEngine.__init__`
 
@@ -662,6 +671,7 @@ The engine stores:
 - `mute` - whether speech is blocked
 - `lock` - a thread lock for safe stopping
 - `pipewire` - whether PipeWire is available
+- `sox` - whether SoX is available for volume adjustment
 
 ### Why the lock exists
 
@@ -681,9 +691,15 @@ pw-cli info
 If it succeeds, the app assumes PipeWire is available.
 If it fails, it falls back to `paplay`.
 
+### `_has_sox()`
+
+This checks whether `sox` is installed.
+
+When it is available, the engine can apply the volume slider before playback.
+
 ## `stop()`
 
-This method tries to terminate any running synthesis/playback processes.
+This method tries to stop any running synthesis or playback processes.
 
 It:
 
@@ -721,6 +737,9 @@ It reads:
 - `voice`
 - `speed`
 - `noise`
+- `noise_w`
+- `sentence_silence`
+- `volume`
 - `output_device`
 
 ### Step 3: locate the model
@@ -746,14 +765,22 @@ The code uses a fixed temp file:
 It builds a command like:
 
 ```python
-piper-tts --model <model> --length_scale <speed> --noise_scale <noise> --noise_w <noise> --output_file /tmp/piper_output.wav
+piper-tts --model <model> --length_scale <speed> --noise_scale <noise> --noise_w <noise_w> --sentence_silence <sentence_silence> --output_file /tmp/piper_output.wav
 ```
 
 ### Step 6: run Piper
 
-It launches Piper with `subprocess.Popen(...)`, sends the text on stdin, and waits for completion.
+It launches Piper with `subprocess.Popen(...)`, sends the text on stdin, and
+waits for completion.
 
-### Step 7: play the audio
+### Step 7: adjust volume if needed
+
+If the slider is not at `100%`, the engine uses SoX to write a second temp file
+with the requested gain.
+
+If SoX is missing, the app keeps going and prints a short warning.
+
+### Step 8: play the audio
 
 The audio playback command is:
 
@@ -762,24 +789,30 @@ The audio playback command is:
 
 If a non-default output device is selected, the code adds device arguments.
 
-### Step 8: cleanup
+### Step 9: cleanup
 
 Finally it:
 
 - clears the process references
 - deletes the temp WAV file if possible
+- deletes the adjusted temp WAV file if it was created
 
 ## `settings.py`
 
 This module handles user preferences.
 
+Think of it as the app's memory for simple configuration values.
+
 ## `CONFIG_PATH`
 
 The config file is `config.json` in the project directory.
 
+Whenever the user changes a setting and clicks save, the app writes back to this
+file.
+
 ## `DEFAULTS`
 
-Default settings include:
+Default settings include the values the app can safely start with:
 
 - `voice`
 - `speed`
@@ -790,17 +823,19 @@ Default settings include:
 
 ### Important observation
 
-Some settings in the frontend are not fully used by the backend.
-For example:
+These settings are now wired through the full stack:
 
-- `volume` is stored in the browser's localStorage, but not used by the engine
-- `noise_w` and `sentence_silence` are saved, but the engine does not pass them to Piper
+- `volume` is saved in `config.json` and applied during playback when SoX is available
+- `noise_w` is passed to Piper separately from `noise`
+- `sentence_silence` is passed to Piper so it can insert pauses between sentences
 
-That means the UI is a little ahead of the backend in some places.
+That means the UI and backend are aligned for these controls.
 
 ## `load_settings()`
 
-This does:
+This function loads saved settings and makes sure they are still usable.
+
+It does this in a few steps:
 
 1. load `config.json` if it exists
 2. detect available voices
@@ -816,17 +851,27 @@ This prevents broken settings from crashing startup if the chosen voice model is
 
 Writes the settings dictionary to `config.json` using pretty JSON formatting.
 
+That makes the file easy to inspect or edit by hand if needed.
+
 ## `utils.py`
 
-This file contains helper functions.
+This file contains small helper functions used by the rest of the app.
+
+You can think of it as the utility drawer for common filesystem and audio tasks.
 
 ### `get_voice_dir()`
 
 Returns the absolute `voices/` directory path next to the script.
 
+This keeps the app portable because it always looks for voice models beside the
+code instead of in a hard-coded system path.
+
 ### `list_voices(voice_dir=None)`
 
-Scans the voice directory and returns all files ending in `.onnx`, with the suffix removed.
+Scans the voice directory and returns all files ending in `.onnx`, with the
+suffix removed.
+
+That is how the voice dropdown gets its list of available models.
 
 So a file named:
 
@@ -848,9 +893,10 @@ Runs:
 pactl list short sinks
 ```
 
-Then parses sink names from the output.
+Then it parses sink names from the output.
 
-It always includes `"default"` first.
+It always includes `"default"` first, so the user has a safe fallback even if
+the audio tools cannot list any specific devices.
 
 ## Historical Note
 
@@ -869,13 +915,13 @@ history, favorites, recents, port fallback, and browser auto-open.
 
 ## What The README Says vs What The Code Does
 
-The README is helpful, but parts of it are stale or aspirational.
+The README is helpful, and the current backend now implements the audio controls it describes.
 
 ### Examples
 
 - The README mentions GTK4 in one place, but the active app is browser-based.
-- The README says volume control is done via `sox`, but the current backend code does not actually apply volume changes.
-- The README mentions `sentence_silence`, but the engine does not pass it to `piper-tts`.
+- The README says volume control is done via `sox`, and the backend now applies it when available.
+- The README mentions `sentence_silence`, and the engine now passes it to `piper-tts`.
 
 ### What this means for study
 
@@ -929,7 +975,7 @@ That is how the project stays portable.
 
 ## State Flow Summary
 
-Here is the simplest way to understand the data flow:
+Here is the simplest way to think about the data flow:
 
 1. The browser loads the page.
 2. The page calls `/api/status`.
@@ -959,13 +1005,13 @@ Here is the simplest way to understand the data flow:
   - exception handling
   - threading
 
-## Things That Look Incomplete Or Legacy
+## Design Notes
 
-These are not necessarily "bad", but they are important to know while learning:
+These are useful things to keep in mind while learning:
 
-- some UI controls are not fully implemented in the backend
-- the browser page used to live inside one giant Python string, which was harder to maintain
-- some settings are stored but not actually used by synthesis
+- the browser UI is split into `static/index.html`, `static/styles.css`, and `static/app.js`
+- the app is portable by design, so some paths and startup steps are written very explicitly
+- the code uses only standard-library pieces on the backend, which keeps it small but also a little manual
 
 ## Suggested Study Path
 

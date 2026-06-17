@@ -110,7 +110,8 @@ const cleanupText = (text) => {
 
 const updateLabel = id => {
   const el = q(`${id}_val`);
-  if (el) el.textContent = q(id).value;
+  if (!el) return;
+  el.textContent = id === 'volume' ? `${q(id).value}%` : q(id).value;
 };
 
 const loadHistory = async () => {
@@ -245,6 +246,7 @@ const readSettings = () => ({
   noise: q('noise').value,
   noise_w: q('noise_w').value,
   sentence_silence: q('sentence_silence').value,
+  volume: Number(q('volume').value) / 100,
   mute: q('mute').checked,
 });
 
@@ -292,7 +294,7 @@ const loadState = async () => {
     q('noise_w').value = settings.noise_w ?? 0.5;
     q('sentence_silence').value = settings.sentence_silence ?? 0.0;
     q('mute').checked = settings.mute ?? false;
-    q('volume').value = localStorage.getItem('volume') || 100;
+    q('volume').value = Math.round((settings.volume ?? 1.0) * 100);
 
     ['speed', 'noise', 'noise_w', 'sentence_silence', 'volume'].forEach(id => updateLabel(id));
     remoteUrl = `http://${body.local_ip}:${body.port}`;
@@ -312,7 +314,6 @@ const loadState = async () => {
 ['speed', 'noise', 'noise_w', 'sentence_silence', 'volume'].forEach(id => {
   q(id).addEventListener('input', () => {
     updateLabel(id);
-    if (id === 'volume') localStorage.setItem('volume', q(id).value);
   });
 });
 
@@ -442,7 +443,8 @@ const loadPreset = async (name) => {
     q('noise').value = data.preset.noise;
     q('noise_w').value = data.preset.noise_w;
     q('sentence_silence').value = data.preset.sentence_silence;
-    ['speed', 'noise', 'noise_w', 'sentence_silence'].forEach(updateLabel);
+    q('volume').value = Math.round((data.preset.volume ?? 1.0) * 100);
+    ['speed', 'noise', 'noise_w', 'sentence_silence', 'volume'].forEach(updateLabel);
     setStatus('Preset loaded');
   }
 };

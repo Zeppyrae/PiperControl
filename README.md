@@ -80,7 +80,7 @@ Basic usage
 2. (Optional) Open "Audio Settings" expander
    • Choose a voice
    • Choose output device (if you have several)
-   • Adjust speed / noise / volume sliders
+   • Adjust speed / noise / clarity / silence / volume sliders
 3. Click "Speak"
 4. (Optional) After speaking, open "History & Favorites" expander
    • Click ★ on a recent entry to add it to favorites
@@ -96,6 +96,8 @@ Voice dropdown         →  Selects which model to use (saved)
 Output dropdown        →  Selects audio sink (friendly names, saved)
 Speed slider           →  0.7 = slower, 1.5 = faster (saved)
 Noise slider           →  0.0 = clean, 1.0 = very expressive/noisy (saved)
+Clarity slider         →  Separate `noise_w` control for voice texture (saved)
+Silence slider         →  Adds pauses between sentences via `sentence_silence`
 Volume slider          →  0.0 = silent, 2.0 = very loud (saved, requires sox)
 Mute button            →  Red + "Unmute" when active, stops all sound (saved)
 Speak                  →  Generate and play the current text
@@ -124,7 +126,7 @@ No voices shown           → No .onnx files in voices/ folder
 
 No sound                  → Check selected device, mute status, pw-play/paplay working?
 
-Volume slider ineffective → Install sox package
+Volume slider ineffective → Install sox package or check your playback device
 
 Long device names ugly    → Should be ellipsized (GTK theme issue?)
 
