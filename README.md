@@ -12,10 +12,24 @@ If you want to study how the code works in depth, see:
 
 That file explains the app flow, backend, frontend, and data files in detail.
 
+Project structure
+-----------------
+- `Piper_Control.desktop` - icon-based desktop launcher using `assets/icon.png`
+- `main.py` - command-line entry point
+- `browser_ui.py` - HTTP server and API
+- `static/index.html` - browser UI markup
+- `static/styles.css` - UI styling
+- `static/app.js` - UI behavior and API calls
+- `engine.py` - Piper synthesis and playback
+- `settings.py` - config loading and saving
+- `utils.py` - voice and sink helpers
+
 This application is intentionally designed to be fully portable:
 - Just copy the entire folder anywhere
 - Place your voice models (*.onnx + *.onnx.json) in the voices/ subfolder
-- Run: python3 main.py
+- Run: python3 -u main.py
+- Or open `Piper_Control.desktop` for the icon-based launcher
+- The desktop launcher uses a relative icon path, so keep the repo folder together if you move it
 - All settings are saved in config.json inside the same folder
 - History, favorites, presets and recents are saved in separate JSON files in the same folder
 
@@ -53,7 +67,6 @@ Software you need (usually already present on most Linux distributions):
   sudo apt install sox   /   sudo dnf install sox   /   sudo pacman -S sox
 
 • Any modern browser for the web UI
-  sudo apt install sox   /   sudo dnf install sox   /   sudo pacman -S sox
 
 Voice models
 ------------
@@ -117,7 +130,8 @@ Long device names ugly    → Should be ellipsized (GTK theme issue?)
 
 History/Favorites gone    → history.json, favorites.json, or config.json deleted or corrupted
 
-App won't start           → Missing PyGObject / GTK4 packages
+UI changes not showing    → Hard refresh the browser or restart the app
+Static files missing      → Check that `static/index.html`, `static/styles.css`, and `static/app.js` are present
 
 Enjoy your portable TTS control!
 Zeppyrae 2026

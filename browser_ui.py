@@ -1,5 +1,6 @@
 import http.server
 import json
+import mimetypes
 import socket
 import socketserver
 import threading
@@ -10,6 +11,11 @@ from urllib.parse import urlparse
 from engine import PiperEngine
 from settings import load_settings, save_settings
 from utils import list_voices, list_audio_sinks
+
+
+PROJECT_ROOT = Path(__file__).parent
+STATIC_DIR = PROJECT_ROOT / "static"
+ASSETS_DIR = PROJECT_ROOT / "assets"
 
 
 def get_local_ip():
@@ -41,6 +47,14 @@ class BrowserRequestHandler(http.server.BaseHTTPRequestHandler):
         if parsed.path == "/":
             self._set_html_headers()
             self.wfile.write(self.app.html_page().encode("utf-8"))
+            return
+
+        if parsed.path.startswith("/static/"):
+            self.app.serve_static(self, parsed.path[len("/static/"):])
+            return
+
+        if parsed.path.startswith("/assets/"):
+            self.app.serve_asset(self, parsed.path[len("/assets/"):])
             return
 
         if parsed.path == "/api/status":
@@ -207,6 +221,7 @@ class BrowserApp:
 
     def __init__(self, port: int = 8080):
         self.port = port
+        self.static_dir = STATIC_DIR
         self.settings = load_settings()
         self.engine = PiperEngine()
         self.tts_thread = None
@@ -385,812 +400,61 @@ class BrowserApp:
         self.stop_server()
 
     def html_page(self) -> str:
-        return """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Piper TTS Control</title>
-<style>
-  * { box-sizing: border-box; }
-  
-  :root { --bg: #121212; --bg-light: #1e1e1e; --bg-sidebar: #1a1a1a; --border: #333; --text: #eee; --text-muted: #999; --primary: #4f8cff; --primary-hover: #6fa3ff; --secondary: #2d2d2d; --danger: #e34d5a; }
-  
-  body.light-mode { --bg: #f5f5f5; --bg-light: #ffffff; --bg-sidebar: #f0f0f0; --border: #ddd; --text: #222; --text-muted: #666; }
-  
-  body { margin: 0; min-height: 100vh; display: flex; background: var(--bg); color: var(--text); font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; transition: background .2s, color .2s; overflow-x: hidden; }
-  
-  .sidebar { width: 300px; background: var(--bg-sidebar); border-right: 1px solid var(--border); overflow-y: auto; height: 100vh; position: fixed; left: 0; top: 0; }
-  .sidebar-header { padding: 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
-  .theme-toggle { background: none; border: none; font-size: 1.2rem; cursor: pointer; }
-  .sidebar-overlay { display: none; }
-  .main { flex: 1; margin-left: 300px; display: flex; justify-content: center; align-items: flex-start; padding: 24px; }
-  .mobile-topbar { display: none; }
-  .toolbar { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
-  
-  .sidebar-section { border-bottom: 1px solid var(--border); padding: 12px; }
-  .sidebar-title { font-weight: 600; font-size: 0.9rem; color: var(--primary); margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
-  .sidebar-title:hover { color: var(--primary-hover); }
-  .toggle-btn { font-size: 0.75rem; color: var(--text-muted); }
-  .sidebar-content { display: none; max-height: 350px; overflow-y: auto; }
-  .sidebar-content.open { display: block; }
-  
-  .item { padding: 8px 10px; background: var(--bg-light); border-radius: 8px; margin-bottom: 6px; font-size: 0.85rem; cursor: pointer; transition: background .15s; display: flex; justify-content: space-between; align-items: center; }
-  .item:hover { background: var(--border); }
-  .item-text { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .item-actions { display: flex; gap: 4px; }
-  .item-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; padding: 0; }
-  .item-btn:hover { color: var(--primary); }
-  
-  .search-box { width: 100%; padding: 8px; background: var(--bg-light); border: 1px solid var(--border); border-radius: 6px; color: var(--text); margin-bottom: 8px; font-size: 0.85rem; }
-  .recent-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-  .recent-btn { padding: 6px 10px; background: var(--bg-light); border: 1px solid var(--border); border-radius: 6px; color: var(--text); cursor: pointer; font-size: 0.8rem; }
-  .recent-btn:hover { background: var(--primary); color: white; }
-  
-  .container { width: min(900px, 100%); }
-  h1 { margin: 0 0 20px 0; font-size: 1.7rem; }
-  .card { background: var(--bg-light); border: 1px solid var(--border); border-radius: 14px; padding: 20px; box-shadow: 0 8px 32px rgba(0,0,0,0.1); }
-  
-  textarea { width: 100%; min-height: 180px; border: 1px solid var(--border); background: var(--bg); color: var(--text); padding: 14px; border-radius: 10px; resize: vertical; font-size: 1rem; line-height: 1.6; }
-  textarea.batch-mode { min-height: 300px; }
-  
-  .counter { font-size: 0.8rem; color: var(--text-muted); margin-top: 4px; }
-  .row { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-top: 16px; }
-  label { display: block; margin-bottom: 6px; color: var(--text); font-size: 0.9rem; font-weight: 500; }
-  select, input[type="range"], input[type="number"], input[type="text"], input[type="search"] { width: 100%; border-radius: 8px; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 10px; }
-  input[type="range"] { padding: 6px; }
-  
-  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-  .mobile-actions-bar { display: none; }
-  button { border: none; border-radius: 8px; padding: 10px 16px; font-size: 0.9rem; cursor: pointer; transition: transform .15s, background .15s; font-weight: 500; }
-  button:hover { transform: translateY(-2px); }
-  .primary { background: var(--primary); color: white; }
-  .primary:hover { background: var(--primary-hover); }
-  .secondary { background: var(--secondary); color: var(--text); }
-  .secondary:hover { background: var(--border); }
-  .danger { background: var(--danger); color: white; }
-  .small { padding: 6px 10px; font-size: 0.8rem; }
-  
-  .status { margin-top: 10px; font-size: 0.9rem; color: #6f9; }
-  .field-inline { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
-  .field-inline label { margin-bottom: 0; }
-  .remote-access { margin-top: 14px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
-  .remote-access-title { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 6px; }
-  .remote-access-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .remote-access-url { font-family: monospace; word-break: break-all; flex: 1 1 260px; }
-  
-  .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; }
-  .modal.open { display: flex; }
-  .modal-content { background: var(--bg-light); border-radius: 12px; padding: 24px; max-width: 500px; max-height: 80vh; overflow-y: auto; width: min(500px, calc(100vw - 32px)); }
-  .modal-close { float: right; cursor: pointer; font-size: 1.5rem; color: var(--text-muted); }
-  
-  .shortcut-list { display: grid; gap: 10px; margin-top: 12px; }
-  .shortcut { display: grid; grid-template-columns: 120px 1fr; gap: 12px; padding: 8px; background: var(--bg); border-radius: 6px; }
-  .shortcut-key { font-weight: 600; color: var(--primary); font-family: monospace; }
-  
-  @media (max-width: 768px) {
-    body.sidebar-open { overflow: hidden; }
-    .sidebar { width: min(320px, 86vw); max-width: 100%; z-index: 1100; transform: translateX(-100%); transition: transform .2s ease; box-shadow: 0 10px 30px rgba(0,0,0,0.35); }
-    .sidebar.open { transform: translateX(0); }
-    .sidebar-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 1050; }
-    .sidebar-overlay.open { display: block; }
-    .main { margin-left: 0; padding: 12px; width: 100%; }
-    .mobile-topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-    .mobile-brand { font-size: 1rem; font-weight: 600; }
-    .mobile-actions { display: flex; align-items: center; gap: 8px; }
-    .container { width: 100%; }
-    .card { padding: 16px; border-radius: 12px; }
-    h1 { font-size: 1.4rem; margin-bottom: 16px; }
-    textarea { min-height: 160px; padding: 12px; }
-    textarea.batch-mode { min-height: 240px; }
-    .row { grid-template-columns: 1fr; gap: 12px; }
-    .controls { display: grid; grid-template-columns: 1fr 1fr; }
-    .controls button { width: 100%; }
-    .field-inline { gap: 10px; align-items: flex-start; }
-    .field-inline label { width: 100%; }
-    .remote-access-row button,
-    .remote-access-row a { width: 100%; text-align: center; }
-    .toolbar { gap: 8px; }
-    .toolbar button { flex: 1 1 140px; }
-    .shortcut { grid-template-columns: 1fr; gap: 6px; }
-    .mobile-actions-bar {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      position: fixed;
-      left: 12px;
-      right: 12px;
-      bottom: 12px;
-      z-index: 1000;
-      padding: 10px;
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      background: color-mix(in srgb, var(--bg-light) 88%, transparent);
-      backdrop-filter: blur(12px);
-      box-shadow: 0 12px 32px rgba(0,0,0,0.28);
-    }
-    .mobile-actions-bar button {
-      min-height: 48px;
-      font-size: 1rem;
-    }
-    .card { padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px)); }
-  }
+        return self.read_static_text("index.html")
 
-  @media (max-width: 480px) {
-    .main { padding: 10px; }
-    .card { padding: 14px; padding-bottom: calc(92px + env(safe-area-inset-bottom, 0px)); }
-    button { padding: 10px 12px; }
-    .controls { grid-template-columns: 1fr; }
-    .counter { line-height: 1.5; }
-    .mobile-topbar { margin-bottom: 10px; }
-    .mobile-actions-bar { left: 10px; right: 10px; bottom: 10px; }
-  }
-</style>
-</head>
-<body>
+    def read_static_text(self, relative_path: str) -> str:
+        path = self._safe_static_path(relative_path)
+        return path.read_text(encoding="utf-8")
 
-<div id="sidebar-overlay" class="sidebar-overlay" onclick="closeSidebar()"></div>
+    def serve_static(self, handler, relative_path: str):
+        try:
+            path = self._safe_static_path(relative_path)
+        except ValueError:
+            handler.send_error(403, "Forbidden")
+            return
+        if not path.exists() or not path.is_file():
+            handler.send_error(404, "Not Found")
+            return
 
-<div id="sidebar" class="sidebar">
-  <div class="sidebar-header">
-    <div style="font-weight: 600;">Piper</div>
-    <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">🌙</button>
-  </div>
-  
-  <div class="sidebar-section">
-    <div class="sidebar-title" onclick="toggleSection('presets')">
-      ⚙️ Presets <span class="toggle-btn">▼</span>
-    </div>
-    <div id="presets" class="sidebar-content open">
-      <div id="presets-list"></div>
-      <button class="secondary small" style="width:100%; margin-top:8px;" onclick="savePreset()">Save Current</button>
-    </div>
-  </div>
-  
-  <div class="sidebar-section">
-    <div class="sidebar-title" onclick="toggleSection('recents')">
-      📌 Recent <span class="toggle-btn">▼</span>
-    </div>
-    <div id="recents" class="sidebar-content open">
-      <div style="margin-bottom:8px;">
-        <small style="color:var(--text-muted);">Voices</small>
-        <div id="recent-voices" class="recent-buttons"></div>
-      </div>
-      <div>
-        <small style="color:var(--text-muted);">Devices</small>
-        <div id="recent-devices" class="recent-buttons"></div>
-      </div>
-    </div>
-  </div>
-  
-  <div class="sidebar-section">
-    <div class="sidebar-title" onclick="toggleSection('history')">
-      📋 History <span class="toggle-btn">▼</span>
-    </div>
-    <div id="history" class="sidebar-content open">
-      <input type="search" id="history-search" class="search-box" placeholder="Search...">
-      <div id="history-list"></div>
-      <button class="secondary small" style="width:100%; margin-top:8px;" onclick="clearHistory()">Clear All</button>
-    </div>
-  </div>
-  
-  <div class="sidebar-section">
-    <div class="sidebar-title" onclick="toggleSection('favorites')">
-      ⭐ Favorites <span class="toggle-btn">▼</span>
-    </div>
-    <div id="favorites" class="sidebar-content open">
-      <div id="favorites-list"></div>
-      <button class="secondary small" style="width:100%; margin-top:8px;" onclick="saveFavorite()">Save Current</button>
-    </div>
-  </div>
-</div>
+        content_type, _ = mimetypes.guess_type(path.name)
+        handler.send_response(200)
+        handler.send_header("Content-Type", content_type or "application/octet-stream")
+        handler.send_header("Content-Length", str(path.stat().st_size))
+        handler.end_headers()
+        with open(path, "rb") as f:
+            handler.wfile.write(f.read())
 
-<div class="main">
-  <div class="container">
-    <div class="card">
-      <div class="mobile-topbar">
-        <button class="secondary small" type="button" onclick="toggleSidebar()">☰ Menu</button>
-        <div class="mobile-brand">Piper TTS</div>
-        <div class="mobile-actions">
-          <button class="secondary small" type="button" onclick="toggleTheme()" title="Toggle theme">◐</button>
-        </div>
-      </div>
-      <h1>Piper TTS</h1>
-      
-      <div class="toolbar">
-        <button class="secondary small" onclick="toggleBatchMode()" title="Switch to batch mode">📝 Batch</button>
-        <button class="secondary small" onclick="showHelp()" title="Show keyboard shortcuts">⌨️ Help</button>
-        <button class="secondary small" onclick="showRemoteAccess()" title="Show phone access address">Phone Access</button>
-      </div>
-      
-      <textarea id="text" placeholder="Type your text here... (Ctrl+Enter to speak, Escape to stop)" ondrop="handleDrop(event)" ondragover="event.preventDefault()" ondragenter="event.preventDefault()"></textarea>
-      <div class="counter">
-        <span id="char-count">0</span> characters | <span id="word-count">0</span> words | <span id="read-time">~0 sec</span> read
-      </div>
-      
-      <div class="mobile-actions-bar">
-        <button class="primary" type="button" onclick="onSpeak()">▶️ Speak</button>
-        <button class="secondary" type="button" onclick="onStop()">⏹️ Stop</button>
-      </div>
-      
-      <div class="row">
-        <div>
-          <label for="voice">Voice</label>
-          <select id="voice"></select>
-          <div id="voice-preview" style="margin-top:6px;"></div>
-        </div>
-        <div>
-          <label for="output_device">Output Device</label>
-          <select id="output_device"></select>
-        </div>
-      </div>
-      
-      <div class="row">
-        <div>
-          <label for="speed">Speed <span id="speed_val">1.0</span></label>
-          <input type="range" id="speed" min="0.6" max="1.6" step="0.05">
-        </div>
-        <div>
-          <label for="noise">Noise <span id="noise_val">0.5</span></label>
-          <input type="range" id="noise" min="0.0" max="1.0" step="0.05">
-        </div>
-        <div>
-          <label for="volume">Volume <span id="volume_val">100</span>%</label>
-          <input type="range" id="volume" min="0" max="100" step="5" value="100">
-        </div>
-      </div>
-      
-      <div class="row">
-        <div>
-          <label for="noise_w">Clarity <span id="noise_w_val">0.5</span></label>
-          <input type="range" id="noise_w" min="0.0" max="1.0" step="0.05">
-        </div>
-        <div>
-          <label for="sentence_silence">Silence <span id="sentence_silence_val">0.0</span></label>
-          <input type="range" id="sentence_silence" min="0.0" max="2.0" step="0.1">
-        </div>
-      </div>
-      
-      <div class="field-inline">
-        <label><input type="checkbox" id="mute"> Mute</label>
-        <label><input type="checkbox" id="autoClear"> Auto-clear</label>
-        <label><input type="checkbox" id="cleanup"> Clean text</label>
-        <label><input type="checkbox" id="enterToSpeak"> Enter to speak</label>
-      </div>
-      
-      <div class="controls">
-        <button class="primary" onclick="onSpeak()">▶️ Speak</button>
-        <button class="secondary" onclick="onStop()">⏹️ Stop</button>
-        <button class="secondary" onclick="onClear()">✕ Clear</button>
-        <button class="secondary" onclick="saveSettings()">💾 Save</button>
-        <button class="danger" onclick="onShutdown()">🔴 Shutdown</button>
-      </div>
-      
-      <div class="status" id="status">Loading...</div>
-    </div>
-  </div>
-</div>
+    def serve_asset(self, handler, relative_path: str):
+        try:
+            path = self._safe_asset_path(relative_path)
+        except ValueError:
+            handler.send_error(403, "Forbidden")
+            return
+        if not path.exists() or not path.is_file():
+            handler.send_error(404, "Not Found")
+            return
 
-<div id="help-modal" class="modal">
-  <div class="modal-content">
-    <span class="modal-close" onclick="closeHelp()">&times;</span>
-    <h2>Keyboard Shortcuts</h2>
-    <div class="shortcut-list">
-      <div class="shortcut">
-        <div class="shortcut-key">Ctrl+Enter</div>
-        <div>Speak text</div>
-      </div>
-      <div class="shortcut">
-        <div class="shortcut-key">Escape</div>
-        <div>Stop speaking</div>
-      </div>
-      <div class="shortcut">
-        <div class="shortcut-key">Ctrl+L</div>
-        <div>Clear text</div>
-      </div>
-      <div class="shortcut">
-        <div class="shortcut-key">Ctrl+B</div>
-        <div>Toggle batch mode</div>
-      </div>
-    </div>
-  </div>
-</div>
+        content_type, _ = mimetypes.guess_type(path.name)
+        handler.send_response(200)
+        handler.send_header("Content-Type", content_type or "application/octet-stream")
+        handler.send_header("Content-Length", str(path.stat().st_size))
+        handler.end_headers()
+        with open(path, "rb") as f:
+            handler.wfile.write(f.read())
 
-<div id="remote-modal" class="modal" onclick="if (event.target === this) closeRemoteAccess()">
-  <div class="modal-content">
-    <span class="modal-close" onclick="closeRemoteAccess()">&times;</span>
-    <div class="remote-access">
-      <div class="remote-access-title">Phone Access</div>
-      <div class="remote-access-row">
-        <div id="remote_info" class="remote-access-url">Loading...</div>
-        <a id="remote_open" class="secondary small" href="#" target="_blank" rel="noopener noreferrer">Open</a>
-        <button class="secondary small" type="button" onclick="copyRemoteUrl()">Copy IP</button>
-      </div>
-    </div>
-  </div>
-</div>
+    def _safe_static_path(self, relative_path: str) -> Path:
+        candidate = (self.static_dir / relative_path).resolve()
+        static_root = self.static_dir.resolve()
+        if candidate != static_root and static_root not in candidate.parents:
+            raise ValueError("Invalid static path")
+        return candidate
 
-<script>
-const q = id => document.getElementById(id);
-const setStatus = msg => q('status').textContent = msg;
-let allHistory = [];
-let remoteUrl = '';
-
-const createItemRow = (label, title, actions) => {
-  const item = document.createElement('div');
-  item.className = 'item';
-
-  const text = document.createElement('span');
-  text.className = 'item-text';
-  text.textContent = label;
-  text.title = title || label;
-  item.appendChild(text);
-
-  const actionWrap = document.createElement('div');
-  actionWrap.className = 'item-actions';
-  actions.forEach(action => {
-    const button = document.createElement('button');
-    button.className = 'item-btn';
-    button.type = 'button';
-    button.textContent = action.label;
-    button.title = action.title;
-    button.addEventListener('click', action.onClick);
-    actionWrap.appendChild(button);
-  });
-  item.appendChild(actionWrap);
-
-  return item;
-};
-
-const toggleSection = (id) => q(id).classList.toggle('open');
-const toggleSidebar = () => {
-  q('sidebar').classList.toggle('open');
-  q('sidebar-overlay').classList.toggle('open');
-  document.body.classList.toggle('sidebar-open');
-};
-const closeSidebar = () => {
-  q('sidebar').classList.remove('open');
-  q('sidebar-overlay').classList.remove('open');
-  document.body.classList.remove('sidebar-open');
-};
-const toggleTheme = () => {
-  document.body.classList.toggle('light-mode');
-  localStorage.setItem('theme', document.body.classList.contains('light-mode') ? 'light' : 'dark');
-};
-const toggleBatchMode = () => {
-  q('text').classList.toggle('batch-mode');
-  q('text').placeholder = q('text').classList.contains('batch-mode') ? 
-    'Enter multiple lines to speak sequentially...' : 
-    'Type your text here...';
-};
-const showHelp = () => q('help-modal').classList.add('open');
-const closeHelp = () => q('help-modal').classList.remove('open');
-const showRemoteAccess = () => {
-  if (!remoteUrl) {
-    setStatus('Remote URL not ready yet');
-    return;
-  }
-  q('remote-modal').classList.add('open');
-};
-const closeRemoteAccess = () => q('remote-modal').classList.remove('open');
-const copyRemoteUrl = async () => {
-  if (!remoteUrl) {
-    setStatus('Remote URL not ready yet');
-    return;
-  }
-  try {
-    await navigator.clipboard.writeText(remoteUrl);
-    setStatus('Phone access URL copied');
-  } catch (error) {
-    setStatus(error.message || 'Failed to copy URL');
-  }
-};
-
-const handleDrop = (e) => {
-  e.preventDefault();
-  const files = e.dataTransfer.files;
-  if (files.length > 0) {
-    const reader = new FileReader();
-    reader.onload = (event) => q('text').value = event.target.result;
-    reader.readAsText(files[0]);
-    setStatus('File loaded');
-  }
-};
-
-const updateCounter = () => {
-  const text = q('text').value;
-  const chars = text.length;
-  const words = text.trim().split(/\\s+/).filter(w => w.length > 0).length;
-  const readTime = Math.ceil(words / 150 * 60);
-  q('char-count').textContent = chars;
-  q('word-count').textContent = words;
-  q('read-time').textContent = '~' + readTime;
-};
-
-const cleanupText = (text) => {
-  return text
-    .replace(/\\s+/g, ' ')
-    .replace(/([.!?])\\s+([A-Z])/g, '$1 $2')
-    .trim();
-};
-
-const loadState = async () => {
-  const savedTheme = localStorage.getItem('theme');
-  if (savedTheme === 'light') document.body.classList.add('light-mode');
-  q('enterToSpeak').checked = localStorage.getItem('enterToSpeak') === 'true';
-  
-  try {
-    const res = await fetch('/api/status');
-    const body = await res.json();
-    const settings = body.settings;
-    const voices = body.voices;
-    const sinks = body.sinks;
-
-    q('voice').innerHTML = voices.map(v => `<option value="${v}">${v}</option>`).join('');
-    if (settings.voice) q('voice').value = settings.voice;
-
-    q('output_device').innerHTML = sinks.map(s => `<option value="${s}">${s}</option>`).join('');
-    if (settings.output_device) q('output_device').value = settings.output_device;
-
-    q('speed').value = settings.speed ?? 1.0;
-    q('noise').value = settings.noise ?? 0.5;
-    q('noise_w').value = settings.noise_w ?? 0.5;
-    q('sentence_silence').value = settings.sentence_silence ?? 0.0;
-    q('mute').checked = settings.mute ?? false;
-    q('volume').value = localStorage.getItem('volume') || 100;
-
-    ['speed', 'noise', 'noise_w', 'sentence_silence', 'volume'].forEach(id => updateLabel(id));
-    remoteUrl = `http://${body.local_ip}:${body.port}`;
-    q('remote_info').textContent = remoteUrl;
-    q('remote_open').href = remoteUrl;
-
-    await loadHistory();
-    await loadFavorites();
-    await loadPresets();
-    await loadRecents();
-    setStatus('Ready');
-  } catch (e) {
-    setStatus('Error loading state');
-  }
-};
-
-const loadHistory = async () => {
-  try {
-    const res = await fetch('/api/history');
-    const data = await res.json();
-    allHistory = Array.isArray(data.history) ? data.history : [];
-    renderHistory(allHistory);
-  } catch (e) {
-    console.error('Failed to load history', e);
-  }
-};
-
-const renderHistory = (items) => {
-  const list = q('history-list');
-  list.replaceChildren();
-  if (!items.length) {
-    list.appendChild(createEmptyState('No history yet'));
-    return;
-  }
-
-  items.forEach(item => {
-    list.appendChild(createItemRow(item.text, item.text, [{
-      label: '↗',
-      title: 'Use',
-      onClick: () => insertHistoryText(item.text),
-    }]));
-  });
-};
-
-const createEmptyState = (text) => {
-  const empty = document.createElement('div');
-  empty.className = 'item';
-  empty.textContent = text;
-  return empty;
-};
-
-q('history-search').addEventListener('input', (e) => {
-  const query = e.target.value.toLowerCase();
-  const filtered = allHistory.filter(item => item.text.toLowerCase().includes(query));
-  renderHistory(filtered);
-});
-
-const loadFavorites = async () => {
-  try {
-    const res = await fetch('/api/favorites');
-    const data = await res.json();
-    const list = q('favorites-list');
-    list.replaceChildren();
-    const favorites = Object.entries(data.favorites || {});
-    if (!favorites.length) {
-      list.appendChild(createEmptyState('No favorites yet'));
-      return;
-    }
-    favorites.forEach(([name, text]) => {
-      list.appendChild(createItemRow(name, `${name}: ${text}`, [
-        {
-          label: '↗',
-          title: 'Use',
-          onClick: () => insertHistoryText(text),
-        },
-        {
-          label: '✕',
-          title: 'Delete',
-          onClick: () => removeFavorite(name),
-        },
-      ]));
-    });
-  } catch (e) {
-    console.error('Failed to load favorites', e);
-  }
-};
-
-const loadPresets = async () => {
-  try {
-    const res = await fetch('/api/presets');
-    const data = await res.json();
-    const list = q('presets-list');
-    list.replaceChildren();
-    const presets = Object.entries(data.presets || {});
-    if (!presets.length) {
-      list.appendChild(createEmptyState('No presets saved yet'));
-      return;
-    }
-    presets.forEach(([name, preset]) => {
-      list.appendChild(createItemRow(name, name, [
-        {
-          label: '↗',
-          title: 'Load',
-          onClick: () => loadPreset(name),
-        },
-        {
-          label: '✕',
-          title: 'Delete',
-          onClick: () => deletePreset(name),
-        },
-      ]));
-    });
-  } catch (e) {
-    console.error('Failed to load presets', e);
-  }
-};
-
-const loadRecents = async () => {
-  try {
-    const res = await fetch('/api/recents');
-    const data = await res.json();
-    
-    q('recent-voices').innerHTML = data.voices.map(v => `
-      <button class="recent-btn" onclick="setVoice('${v}')">${v}</button>
-    `).join('');
-    
-    q('recent-devices').innerHTML = data.devices.map(d => `
-      <button class="recent-btn" onclick="setDevice('${d}')">${d}</button>
-    `).join('');
-  } catch (e) {
-    console.error('Failed to load recents', e);
-  }
-};
-
-const updateLabel = id => {
-  const el = q(`${id}_val`);
-  if (el) el.textContent = id === 'volume' ? q(id).value : q(id).value;
-};
-
-['speed','noise','noise_w','sentence_silence','volume'].forEach(id => {
-  q(id).addEventListener('input', () => {
-    updateLabel(id);
-    if (id === 'volume') localStorage.setItem('volume', q(id).value);
-  });
-});
-
-q('text').addEventListener('input', updateCounter);
-q('enterToSpeak').addEventListener('change', () => {
-  localStorage.setItem('enterToSpeak', q('enterToSpeak').checked ? 'true' : 'false');
-});
-
-const readSettings = () => ({
-  voice: q('voice').value,
-  output_device: q('output_device').value,
-  speed: q('speed').value,
-  noise: q('noise').value,
-  noise_w: q('noise_w').value,
-  sentence_silence: q('sentence_silence').value,
-  mute: q('mute').checked,
-});
-
-const insertText = (text) => {
-  q('text').value = text;
-  q('text').focus();
-  updateCounter();
-  if (window.innerWidth <= 768) closeSidebar();
-};
-const insertHistoryText = (text) => insertText(text);
-const setVoice = (v) => {
-  q('voice').value = v;
-  updateSettings();
-  if (window.innerWidth <= 768) closeSidebar();
-};
-const setDevice = (d) => {
-  q('output_device').value = d;
-  updateSettings();
-  if (window.innerWidth <= 768) closeSidebar();
-};
-
-const onSpeak = async () => {
-  try {
-    let text = q('text').value.trim();
-    if (!text) { setStatus('Enter text before speaking'); return; }
-    if (q('cleanup').checked) text = cleanupText(text);
-    
-    const isBatch = q('text').classList.contains('batch-mode');
-    if (isBatch) {
-      const lines = text.split('\\n').filter(l => l.trim());
-      for (const line of lines) {
-        const body = {...readSettings(), text: line};
-        const res = await fetch('/api/speak', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify(body),
-        });
-        if (!res.ok) throw new Error('Failed to speak batch line');
-        await new Promise(r => setTimeout(r, 500));
-      }
-      setStatus('Batch complete');
-      await loadHistory();
-    } else {
-      const body = {...readSettings(), text};
-      const res = await fetch('/api/speak', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error('Failed to speak text');
-      setStatus('Speaking...');
-      await loadHistory();
-    }
-    if (q('autoClear').checked) setTimeout(() => { q('text').value = ''; updateCounter(); }, 100);
-  } catch (error) {
-    setStatus(error.message || 'Failed to speak');
-  }
-};
-
-const onStop = async () => {
-  await fetch('/api/stop', { method: 'POST' });
-  setStatus('Stopped');
-};
-
-const onClear = () => { q('text').value = ''; q('text').focus(); updateCounter(); setStatus('Text cleared'); };
-
-const saveFavorite = async () => {
-  const text = q('text').value.trim();
-  if (!text) { setStatus('Enter text to save'); return; }
-  const name = prompt('Favorite name:', '');
-  if (!name) return;
-  const res = await fetch('/api/favorite/add', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name, text}),
-  });
-  if (res.ok) { setStatus('Favorite saved'); loadFavorites(); } 
-  else setStatus('Failed to save favorite');
-};
-
-const removeFavorite = async (name) => {
-  if (!confirm('Remove this favorite?')) return;
-  const res = await fetch('/api/favorite/remove', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name}),
-  });
-  if (res.ok) { setStatus('Favorite removed'); loadFavorites(); }
-};
-
-const savePreset = async () => {
-  const name = prompt('Preset name:', '');
-  if (!name) return;
-  const res = await fetch('/api/preset/save', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name, ...readSettings()}),
-  });
-  if (res.ok) { setStatus('Preset saved'); loadPresets(); }
-};
-
-const loadPreset = async (name) => {
-  const res = await fetch('/api/preset/load', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name}),
-  });
-  if (res.ok) {
-    const data = await res.json();
-    q('voice').value = data.preset.voice;
-    q('speed').value = data.preset.speed;
-    q('noise').value = data.preset.noise;
-    q('noise_w').value = data.preset.noise_w;
-    q('sentence_silence').value = data.preset.sentence_silence;
-    ['speed', 'noise', 'noise_w', 'sentence_silence'].forEach(updateLabel);
-    setStatus('Preset loaded');
-  }
-};
-
-const deletePreset = async (name) => {
-  if (!confirm('Delete this preset?')) return;
-  const res = await fetch('/api/preset/delete', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name}),
-  });
-  if (res.ok) { setStatus('Preset deleted'); loadPresets(); }
-};
-
-const clearHistory = async () => {
-  if (!confirm('Clear all history?')) return;
-  const res = await fetch('/api/history/clear', {method: 'POST'});
-  if (res.ok) { setStatus('History cleared'); loadHistory(); }
-};
-
-const saveSettings = async () => {
-  const res = await fetch('/api/settings', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(readSettings()),
-  });
-  setStatus(res.ok ? 'Settings saved' : 'Failed to save');
-};
-
-const updateSettings = async () => {
-  await fetch('/api/settings', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(readSettings()),
-  });
-};
-
-const onShutdown = async () => {
-  if (!confirm('Shutdown server?')) return;
-  await fetch('/api/shutdown', { method: 'POST' });
-  setStatus('Server shutting down...');
-};
-
-window.addEventListener('DOMContentLoaded', () => {
-  loadState();
-  updateCounter();
-  
-  q('text').addEventListener('keydown', event => {
-    if (
-      event.key === 'Enter' &&
-      q('enterToSpeak').checked &&
-      !event.shiftKey &&
-      !event.ctrlKey &&
-      !event.metaKey &&
-      !event.altKey
-    ) {
-      event.preventDefault();
-      onSpeak();
-      return;
-    }
-
-    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-      event.preventDefault();
-      onSpeak();
-    }
-  });
-
-  window.addEventListener('keydown', event => {
-    if (event.key === 'Escape') { event.preventDefault(); onStop(); }
-    if ((event.ctrlKey || event.metaKey) && event.key === 'l') { event.preventDefault(); onClear(); }
-    if ((event.ctrlKey || event.metaKey) && event.key === 'b') { event.preventDefault(); toggleBatchMode(); }
-  });
-
-  window.addEventListener('resize', () => {
-    if (window.innerWidth > 768) closeSidebar();
-  });
-});
-</script>
-</body>
-</html>"""
+    def _safe_asset_path(self, relative_path: str) -> Path:
+        candidate = (ASSETS_DIR / relative_path).resolve()
+        asset_root = ASSETS_DIR.resolve()
+        if candidate != asset_root and asset_root not in candidate.parents:
+            raise ValueError("Invalid asset path")
+        return candidate
 
     def start(self):
         if self.server:

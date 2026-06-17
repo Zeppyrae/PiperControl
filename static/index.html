@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Piper TTS Control</title>
+<link rel="icon" type="image/png" href="/assets/icon.png">
+<link rel="stylesheet" href="/static/styles.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+
+<div id="sidebar-overlay" class="sidebar-overlay"></div>
+
+<div id="sidebar" class="sidebar">
+  <div class="sidebar-header">
+    <div style="font-weight: 600;">Piper</div>
+    <button id="theme-toggle-sidebar" class="theme-toggle" type="button" title="Toggle theme">🌙</button>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-title" data-section="presets">
+      ⚙️ Presets <span class="toggle-btn">▼</span>
+    </div>
+    <div id="presets" class="sidebar-content open">
+      <div id="presets-list"></div>
+      <button id="save-preset-btn" class="secondary small" type="button" style="width:100%; margin-top:8px;">Save Current</button>
+    </div>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-title" data-section="recents">
+      📌 Recent <span class="toggle-btn">▼</span>
+    </div>
+    <div id="recents" class="sidebar-content open">
+      <div style="margin-bottom:8px;">
+        <small style="color:var(--text-muted);">Voices</small>
+        <div id="recent-voices" class="recent-buttons"></div>
+      </div>
+      <div>
+        <small style="color:var(--text-muted);">Devices</small>
+        <div id="recent-devices" class="recent-buttons"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-title" data-section="history">
+      📋 History <span class="toggle-btn">▼</span>
+    </div>
+    <div id="history" class="sidebar-content open">
+      <input type="search" id="history-search" class="search-box" placeholder="Search...">
+      <div id="history-list"></div>
+      <button id="clear-history-btn" class="secondary small" type="button" style="width:100%; margin-top:8px;">Clear All</button>
+    </div>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-title" data-section="favorites">
+      ⭐ Favorites <span class="toggle-btn">▼</span>
+    </div>
+    <div id="favorites" class="sidebar-content open">
+      <div id="favorites-list"></div>
+      <button id="save-favorite-btn" class="secondary small" type="button" style="width:100%; margin-top:8px;">Save Current</button>
+    </div>
+  </div>
+</div>
+
+<div class="main">
+  <div class="container">
+    <div class="card">
+      <div class="mobile-topbar">
+        <button id="sidebar-toggle-btn" class="secondary small" type="button">☰ Menu</button>
+        <div class="mobile-brand">Piper TTS</div>
+        <div class="mobile-actions">
+          <button id="theme-toggle-mobile" class="secondary small" type="button" title="Toggle theme">◐</button>
+        </div>
+      </div>
+      <h1>Piper TTS</h1>
+
+      <div class="toolbar">
+        <button id="batch-toggle-btn" class="secondary small" type="button" title="Switch to batch mode">📝 Batch</button>
+        <button id="help-btn" class="secondary small" type="button" title="Show keyboard shortcuts">⌨️ Help</button>
+        <button id="remote-btn" class="secondary small" type="button" title="Show phone access address">Phone Access</button>
+      </div>
+
+      <textarea id="text" placeholder="Type your text here... (Ctrl+Enter to speak, Escape to stop)"></textarea>
+      <div class="counter">
+        <span id="char-count">0</span> characters | <span id="word-count">0</span> words | <span id="read-time">~0 sec</span> read
+      </div>
+
+      <div class="mobile-actions-bar">
+        <button id="speak-btn-mobile" class="primary" type="button">▶️ Speak</button>
+        <button id="stop-btn-mobile" class="secondary" type="button">⏹️ Stop</button>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="voice">Voice</label>
+          <select id="voice"></select>
+          <div id="voice-preview" style="margin-top:6px;"></div>
+        </div>
+        <div>
+          <label for="output_device">Output Device</label>
+          <select id="output_device"></select>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="speed">Speed <span id="speed_val">1.0</span></label>
+          <input type="range" id="speed" min="0.6" max="1.6" step="0.05">
+        </div>
+        <div>
+          <label for="noise">Noise <span id="noise_val">0.5</span></label>
+          <input type="range" id="noise" min="0.0" max="1.0" step="0.05">
+        </div>
+        <div>
+          <label for="volume">Volume <span id="volume_val">100</span>%</label>
+          <input type="range" id="volume" min="0" max="100" step="5" value="100">
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="noise_w">Clarity <span id="noise_w_val">0.5</span></label>
+          <input type="range" id="noise_w" min="0.0" max="1.0" step="0.05">
+        </div>
+        <div>
+          <label for="sentence_silence">Silence <span id="sentence_silence_val">0.0</span></label>
+          <input type="range" id="sentence_silence" min="0.0" max="2.0" step="0.1">
+        </div>
+      </div>
+
+      <div class="field-inline">
+        <label><input type="checkbox" id="mute"> Mute</label>
+        <label><input type="checkbox" id="autoClear"> Auto-clear</label>
+        <label><input type="checkbox" id="cleanup"> Clean text</label>
+        <label><input type="checkbox" id="enterToSpeak"> Enter to speak</label>
+      </div>
+
+      <div class="controls">
+        <button id="speak-btn" class="primary" type="button">▶️ Speak</button>
+        <button id="stop-btn" class="secondary" type="button">⏹️ Stop</button>
+        <button id="clear-btn" class="secondary" type="button">✕ Clear</button>
+        <button id="save-btn" class="secondary" type="button">💾 Save</button>
+        <button id="shutdown-btn" class="danger" type="button">🔴 Shutdown</button>
+      </div>
+
+      <div class="status" id="status">Loading...</div>
+    </div>
+  </div>
+</div>
+
+<div id="help-modal" class="modal">
+  <div class="modal-content">
+    <span id="help-close-btn" class="modal-close">&times;</span>
+    <h2>Keyboard Shortcuts</h2>
+    <div class="shortcut-list">
+      <div class="shortcut">
+        <div class="shortcut-key">Ctrl+Enter</div>
+        <div>Speak text</div>
+      </div>
+      <div class="shortcut">
+        <div class="shortcut-key">Escape</div>
+        <div>Stop speaking</div>
+      </div>
+      <div class="shortcut">
+        <div class="shortcut-key">Ctrl+L</div>
+        <div>Clear text</div>
+      </div>
+      <div class="shortcut">
+        <div class="shortcut-key">Ctrl+B</div>
+        <div>Toggle batch mode</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="remote-modal" class="modal">
+  <div class="modal-content">
+    <span id="remote-close-btn" class="modal-close">&times;</span>
+    <div class="remote-access">
+      <div class="remote-access-title">Phone Access</div>
+      <div class="remote-access-row">
+        <div id="remote_info" class="remote-access-url">Loading...</div>
+        <a id="remote_open" class="secondary small" href="#" target="_blank" rel="noopener noreferrer">Open</a>
+        <button id="remote-copy-btn" class="secondary small" type="button">Copy IP</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

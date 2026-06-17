@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Piper_Control
+Comment=Portable browser-based Piper TTS controller
+Exec=sh -c 'cd "$(dirname "$1")" && exec python3 -u main.py' sh %k
+Icon=assets/icon.png
+Terminal=false
+Categories=AudioVideo;Audio;Utility;
+StartupNotify=true

@@ -30,12 +30,16 @@ That makes it a good learning project because you can study:
 
 Main files:
 
+- `Piper_Control.desktop` - icon-based launcher that starts `main.py` and points at `assets/icon.png`
 - `main.py` - command-line entry point
 - `browser_ui.py` - main app, HTTP API, and generated HTML/JS UI
 - `engine.py` - launches Piper TTS and audio playback
 - `settings.py` - loads and saves config values
 - `utils.py` - helper functions for voices and audio sinks
-- `web_control.py` - older legacy mini web UI, not used by the main app
+
+Legacy note:
+
+- The older `web_control.py` mini web UI has been retired and is no longer part of the current repository.
 
 Data files created at runtime:
 
@@ -58,14 +62,14 @@ If you want to study the code in a useful order, follow this path:
 3. `engine.py`
 4. `settings.py`
 5. `utils.py`
-6. `web_control.py` only after the above, because it is older and not part of the current main path
+6. Historical note: older versions of this repo included `web_control.py`, but it is no longer present
 
 ## Execution Flow
 
 When you run:
 
 ```bash
-python3 main.py
+python3 -u main.py
 ```
 
 the flow is:
@@ -848,40 +852,20 @@ Then parses sink names from the output.
 
 It always includes `"default"` first.
 
-## `web_control.py`
+## Historical Note
 
-This file is older and appears to be a separate, simpler experiment.
+Older versions of this repository included a separate `web_control.py` experiment.
+That file has been removed, and the current app now lives entirely in `main.py`,
+`browser_ui.py`, `engine.py`, `settings.py`, `utils.py`, and `static/`.
 
-It is not imported by `main.py`, so it is not part of the current main execution path.
-
-### What it contains
-
-- `TTSRequestHandler`
-- a tiny HTML page
-- `WebControl`
-
-### Why it is important
-
-It shows an earlier version of the same idea:
+The important lesson from that older code path is the same:
 
 - serve a local webpage
 - accept `/speak` and `/stop`
 - trigger callbacks
 
-### Difference from the main app
-
-The main app in `browser_ui.py` is much more advanced:
-
-- richer UI
-- persistent state
-- presets
-- history
-- favorites
-- recents
-- port fallback
-- browser auto-open
-
-If you are learning Python, `web_control.py` is useful as a simpler reference, but it is not the active code path.
+The current app does all of that with a richer UI, persistent state, presets,
+history, favorites, recents, port fallback, and browser auto-open.
 
 ## What The README Says vs What The Code Does
 
@@ -979,9 +963,8 @@ Here is the simplest way to understand the data flow:
 
 These are not necessarily "bad", but they are important to know while learning:
 
-- `web_control.py` is not used by `main.py`
 - some UI controls are not fully implemented in the backend
-- the browser page is generated as one giant Python string, which is harder to maintain
+- the browser page used to live inside one giant Python string, which was harder to maintain
 - some settings are stored but not actually used by synthesis
 
 ## Suggested Study Path
@@ -995,8 +978,9 @@ If you want to learn from this repo, I suggest studying it in this order:
 5. `browser_ui.py` top section
 6. `browser_ui.py` request handler
 7. `browser_ui.py` `BrowserApp` state methods
-8. `browser_ui.py` HTML/JS section
-9. `web_control.py` for comparison
+8. `static/index.html`
+9. `static/styles.css`
+10. `static/app.js`
 
 ## Mental Model To Keep In Mind
 
@@ -1026,4 +1010,3 @@ This repo is a small but real example of a Python application that:
 - uses threads to keep the server responsive
 
 If you study the file order above and trace one action end to end, especially "click Speak", you will learn a lot about practical Python application structure.
-
