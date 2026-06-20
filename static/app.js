@@ -812,6 +812,7 @@ window.addEventListener('DOMContentLoaded', () => {
   loadState();
   updateCounter();
 
+  // 1. THIS IS YOUR ORIGINAL KEYDOWN LISTENER (Leave this alone)
   q('text').addEventListener('keydown', event => {
     if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
       q('text')._clipCompletionDirection = event.shiftKey ? -1 : 1;
@@ -837,6 +838,30 @@ window.addEventListener('DOMContentLoaded', () => {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
       event.preventDefault();
       onSpeak();
+    }
+  });
+
+
+  q('text').addEventListener('input', event => {
+    if (event.inputType !== 'insertText' || !event.data) return;
+
+    if (event.data === '!') {
+      const textarea = q('text');
+      const text = textarea.value;
+      const cursor = textarea.selectionStart;
+
+      
+      const textBeforeCursor = text.substring(0, cursor - 1);
+      const lastExclamation = textBeforeCursor.lastIndexOf('!');
+
+      if (lastExclamation !== -1 && !/\s/.test(textBeforeCursor.substring(lastExclamation))) {
+        textarea.value = text.substring(0, cursor - 1) + text.substring(cursor);
+        textarea.selectionStart = textarea.selectionEnd = cursor - 1;
+
+        textarea._clipCompletionDirection = 1;
+
+        completeClipCommand();
+      }
     }
   });
 

@@ -216,14 +216,6 @@ class BrowserRequestHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(data).encode("utf-8"))
             return
 
-        if parsed.path == "/api/network/disable":
-            if not self._require_auth(parsed):
-                return
-            data = self.app.disable_network_access()
-            self._set_json_headers()
-            self.wfile.write(json.dumps(data).encode("utf-8"))
-            return
-
         if parsed.path == "/api/speak":
             if not self._require_auth(parsed, data):
                 return
@@ -398,16 +390,13 @@ class BrowserApp:
         threading.Thread(target=restart, daemon=True).start()
 
     def enable_network_access(self):
-        if self.host not in ("127.0.0.1", "localhost"):
-            return {
-                "ok": True,
-                "network_enabled": True,
-                "access_token": self.access_token,
-                "local_ip": get_local_ip(),
-                "port": self.port,
-            }
+        # Flip the virtual switch to "Open"
+        self.host = "0.0.0.0"
+        
+        print(f"\n[network] Phone/LAN access enabled via HTML panel.")
+        print(f"          URL: http://{get_local_ip()}:{self.port}")
+        print(f"          Access Code: {self.access_token}\n")
 
-        self._restart_for_host("0.0.0.0", rotate_token=True)
         return {
             "ok": True,
             "network_enabled": True,
@@ -417,15 +406,13 @@ class BrowserApp:
         }
 
     def disable_network_access(self):
-        if self.host in ("127.0.0.1", "localhost"):
-            return {
-                "ok": True,
-                "network_enabled": False,
-                "local_ip": get_local_ip(),
-                "port": self.port,
-            }
-
-        self._restart_for_host("127.0.0.1", rotate_token=True)
+        # Flip the virtual switch to "Closed"
+        self.host = "127.0.0.1"
+        
+        # Cycle the password token so any phone that was connected gets instantly locked out
+        self.access_token = secrets.token_urlsafe(16)
+        
+        print("[network] Phone/LAN access disabled via HTML panel.")
         return {
             "ok": True,
             "network_enabled": False,
@@ -681,7 +668,8 @@ class BrowserApp:
 
         for candidate_port in range(requested_port, requested_port + 10):
             try:
-                self.server = ReusableThreadingTCPServer((self.host, candidate_port), handler)
+                # FORCE the underlying socket to listen on 0.0.0.0 (all network addresses) from boot
+                self.server = ReusableThreadingTCPServer(("0.0.0.0", candidate_port), handler)
                 self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
                 self.thread.start()
                 self.port = candidate_port
