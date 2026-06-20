@@ -1,16 +1,21 @@
 import http.server
 import json
+import hmac
 import mimetypes
+import ipaddress
 import socket
 import socketserver
+import secrets
+import subprocess
 import threading
+import time
 import webbrowser
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from engine import PiperEngine
 from settings import load_settings, save_settings
-from utils import list_voices, list_audio_sinks
+from utils import list_voices, list_audio_sinks, list_audio_clips
 
 
 PROJECT_ROOT = Path(__file__).parent
@@ -18,7 +23,56 @@ STATIC_DIR = PROJECT_ROOT / "static"
 ASSETS_DIR = PROJECT_ROOT / "assets"
 
 
+def _is_loopback_ip(value: str) -> bool:
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return value in {"127.0.0.1", "::1", "localhost"}
+
+
+def _is_private_ipv4(value: str) -> bool:
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return address.version == 4 and address.is_private and not address.is_loopback
+
+
 def get_local_ip():
+    try:
+        out = subprocess.check_output(
+            ["ip", "-4", "-o", "addr", "show", "scope", "global"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        fallbacks = []
+        ignored_prefixes = (
+            "lo", "docker", "br-", "veth", "virbr", "tun", "tap", "wg",
+            "tailscale", "zt", "warp", "cloudflare", "utun",
+        )
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) < 4 or "inet" not in parts:
+                continue
+
+            iface = parts[1]
+            if iface.startswith(ignored_prefixes):
+                continue
+
+            try:
+                ip_value = parts[parts.index("inet") + 1].split("/")[0]
+            except (ValueError, IndexError):
+                continue
+
+            if _is_private_ipv4(ip_value):
+                return ip_value
+            fallbacks.append(ip_value)
+
+        if fallbacks:
+            return fallbacks[0]
+    except Exception:
+        pass
+
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
@@ -31,6 +85,39 @@ class BrowserRequestHandler(http.server.BaseHTTPRequestHandler):
     def __init__(self, *args, app=None, **kwargs):
         self.app = app
         super().__init__(*args, **kwargs)
+
+    def _client_ip(self):
+        return self.client_address[0] if self.client_address else "127.0.0.1"
+
+    def _auth_required_for_request(self) -> bool:
+        if self.app.host in {"127.0.0.1", "localhost"}:
+            return False
+        return not _is_loopback_ip(self._client_ip())
+
+    def _request_token(self, parsed, data=None):
+        token = self.headers.get("X-Access-Token", "").strip()
+        if token:
+            return token
+        query_token = parse_qs(parsed.query).get("token", [""])[0].strip()
+        if query_token:
+            return query_token
+        if isinstance(data, dict):
+            body_token = data.get("token", "")
+            if isinstance(body_token, str):
+                return body_token.strip()
+        return ""
+
+    def _require_auth(self, parsed, data=None):
+        if not self._auth_required_for_request():
+            return True
+
+        token = self._request_token(parsed, data)
+        if token and hmac.compare_digest(token, self.app.access_token):
+            return True
+
+        self._set_json_headers(401)
+        self.wfile.write(json.dumps({"ok": False, "error": "Authentication required"}).encode("utf-8"))
+        return False
 
     def _set_json_headers(self, status=200):
         self.send_response(status)
@@ -58,33 +145,46 @@ class BrowserRequestHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/status":
+            if not self._require_auth(parsed):
+                return
             data = {
                 "settings": self.app.settings,
                 "voices": list_voices(),
                 "sinks": list_audio_sinks(),
+                "clips": list_audio_clips(),
                 "local_ip": get_local_ip(),
                 "port": self.app.port,
+                "network_enabled": self.app.host not in ("127.0.0.1", "localhost"),
+                "auth_required": self.app.host not in ("127.0.0.1", "localhost"),
             }
             self._set_json_headers()
             self.wfile.write(json.dumps(data).encode("utf-8"))
             return
 
         if parsed.path == "/api/history":
+            if not self._require_auth(parsed):
+                return
             self._set_json_headers()
             self.wfile.write(json.dumps({"history": self.app.history}).encode("utf-8"))
             return
 
         if parsed.path == "/api/favorites":
+            if not self._require_auth(parsed):
+                return
             self._set_json_headers()
             self.wfile.write(json.dumps({"favorites": self.app.favorites}).encode("utf-8"))
             return
 
         if parsed.path == "/api/presets":
+            if not self._require_auth(parsed):
+                return
             self._set_json_headers()
             self.wfile.write(json.dumps({"presets": self.app.presets}).encode("utf-8"))
             return
 
         if parsed.path == "/api/recents":
+            if not self._require_auth(parsed):
+                return
             self._set_json_headers()
             self.wfile.write(json.dumps(self.app.recents).encode("utf-8"))
             return
@@ -108,28 +208,55 @@ class BrowserRequestHandler(http.server.BaseHTTPRequestHandler):
                     key, value = pair.split("=", 1)
                     data[key] = value
 
-        if parsed.path == "/api/speak":
-            text = data.get("text", "").strip()
-            if text:
-                self.app.update_settings(data)
-                self.app.speak(text)
+        if parsed.path == "/api/network/enable":
+            if not self._require_auth(parsed):
+                return
+            data = self.app.enable_network_access()
             self._set_json_headers()
-            self.wfile.write(json.dumps({"ok": True}).encode("utf-8"))
+            self.wfile.write(json.dumps(data).encode("utf-8"))
+            return
+
+        if parsed.path == "/api/network/disable":
+            if not self._require_auth(parsed):
+                return
+            data = self.app.disable_network_access()
+            self._set_json_headers()
+            self.wfile.write(json.dumps(data).encode("utf-8"))
+            return
+
+        if parsed.path == "/api/speak":
+            if not self._require_auth(parsed, data):
+                return
+            text = data.get("text", "").strip()
+            self.app.update_settings(data)
+            ok, error = self.app.speak(text)
+            if ok:
+                self._set_json_headers()
+                self.wfile.write(json.dumps({"ok": True}).encode("utf-8"))
+            else:
+                self._set_json_headers(400)
+                self.wfile.write(json.dumps({"ok": False, "error": error}).encode("utf-8"))
             return
 
         if parsed.path == "/api/stop":
+            if not self._require_auth(parsed, data):
+                return
             self.app.stop()
             self._set_json_headers()
             self.wfile.write(json.dumps({"ok": True}).encode("utf-8"))
             return
 
         if parsed.path == "/api/settings":
+            if not self._require_auth(parsed, data):
+                return
             self.app.update_settings(data)
             self._set_json_headers()
             self.wfile.write(json.dumps({"ok": True, "settings": self.app.settings}).encode("utf-8"))
             return
 
         if parsed.path == "/api/favorite/add":
+            if not self._require_auth(parsed, data):
+                return
             name = data.get("name", "").strip()
             text = data.get("text", "").strip()
             if name and text:
@@ -143,6 +270,8 @@ class BrowserRequestHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/favorite/remove":
+            if not self._require_auth(parsed, data):
+                return
             name = data.get("name", "").strip()
             if name and name in self.app.favorites:
                 del self.app.favorites[name]
@@ -155,6 +284,8 @@ class BrowserRequestHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/history/clear":
+            if not self._require_auth(parsed, data):
+                return
             self.app.history = []
             self.app.save_history()
             self._set_json_headers()
@@ -162,6 +293,8 @@ class BrowserRequestHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/preset/save":
+            if not self._require_auth(parsed, data):
+                return
             name = data.get("name", "").strip()
             if name:
                 self.app.presets[name] = {
@@ -180,6 +313,8 @@ class BrowserRequestHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/preset/load":
+            if not self._require_auth(parsed, data):
+                return
             name = data.get("name", "").strip()
             if name and name in self.app.presets:
                 preset = self.app.presets[name]
@@ -193,6 +328,8 @@ class BrowserRequestHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/preset/delete":
+            if not self._require_auth(parsed, data):
+                return
             name = data.get("name", "").strip()
             if name and name in self.app.presets:
                 del self.app.presets[name]
@@ -205,6 +342,8 @@ class BrowserRequestHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/shutdown":
+            if not self._require_auth(parsed, data):
+                return
             self._set_json_headers()
             self.wfile.write(json.dumps({"ok": True}).encode("utf-8"))
             threading.Thread(target=self.app.shutdown, daemon=True).start()
@@ -217,10 +356,17 @@ class BrowserRequestHandler(http.server.BaseHTTPRequestHandler):
         return
 
 
+class ReusableThreadingTCPServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
 class BrowserApp:
 
-    def __init__(self, port: int = 8080):
+    def __init__(self, port: int = 8080, host: str = "127.0.0.1"):
         self.port = port
+        self.host = host
+        self.access_token = secrets.token_urlsafe(16)
         self.static_dir = STATIC_DIR
         self.settings = load_settings()
         self.engine = PiperEngine()
@@ -231,6 +377,61 @@ class BrowserApp:
         self.favorites = self.load_favorites()
         self.presets = self.load_presets()
         self.recents = self.load_recents()
+
+    def _restart_for_host(self, target_host: str, rotate_token: bool):
+        if rotate_token:
+            self.access_token = secrets.token_urlsafe(16)
+
+        def restart():
+            time.sleep(0.15)
+            self.stop_server()
+            self.host = target_host
+            self.start()
+            if target_host not in ("127.0.0.1", "localhost"):
+                print("[ok] Phone access enabled.")
+                print(f"      Access code: {self.access_token}")
+                print(f"      Network: http://{get_local_ip()}:{self.port}")
+            else:
+                print("[ok] Phone access disabled.")
+                print(f"      Local: http://127.0.0.1:{self.port}")
+
+        threading.Thread(target=restart, daemon=True).start()
+
+    def enable_network_access(self):
+        if self.host not in ("127.0.0.1", "localhost"):
+            return {
+                "ok": True,
+                "network_enabled": True,
+                "access_token": self.access_token,
+                "local_ip": get_local_ip(),
+                "port": self.port,
+            }
+
+        self._restart_for_host("0.0.0.0", rotate_token=True)
+        return {
+            "ok": True,
+            "network_enabled": True,
+            "access_token": self.access_token,
+            "local_ip": get_local_ip(),
+            "port": self.port,
+        }
+
+    def disable_network_access(self):
+        if self.host in ("127.0.0.1", "localhost"):
+            return {
+                "ok": True,
+                "network_enabled": False,
+                "local_ip": get_local_ip(),
+                "port": self.port,
+            }
+
+        self._restart_for_host("127.0.0.1", rotate_token=True)
+        return {
+            "ok": True,
+            "network_enabled": False,
+            "local_ip": get_local_ip(),
+            "port": self.port,
+        }
 
     def load_history(self):
         history_path = Path(__file__).parent / "history.json"
@@ -383,10 +584,18 @@ class BrowserApp:
 
     def speak(self, text: str):
         if self.settings.get("mute") or not text:
-            return
+            return True, None
 
         if self.tts_thread and self.tts_thread.is_alive():
-            return
+            return True, None
+
+        command = text.strip()
+        if command.startswith("!"):
+            clip_name = command[1:].strip()
+            if not clip_name:
+                return False, "Clip name required"
+            if not self.engine.find_clip_path(clip_name):
+                return False, f"Clip not found: {clip_name}"
 
         self.add_to_history(text)
 
@@ -396,6 +605,7 @@ class BrowserApp:
             daemon=True,
         )
         self.tts_thread.start()
+        return True, None
 
     def stop(self):
         self.engine.stop()
@@ -471,7 +681,7 @@ class BrowserApp:
 
         for candidate_port in range(requested_port, requested_port + 10):
             try:
-                self.server = socketserver.ThreadingTCPServer(("", candidate_port), handler)
+                self.server = ReusableThreadingTCPServer((self.host, candidate_port), handler)
                 self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
                 self.thread.start()
                 self.port = candidate_port
@@ -502,21 +712,29 @@ class BrowserApp:
             return
 
         local_url = f"http://127.0.0.1:{self.port}"
+        launch_url = local_url
+        if self.host not in ("127.0.0.1", "localhost"):
+            launch_url = f"{local_url}?token={quote(self.access_token)}"
         lan_url = f"http://{get_local_ip()}:{self.port}"
         print(f"[2/4] Browser control server is running on port {self.port}")
         print(f"      Local:   {local_url}")
-        print(f"      Network: {lan_url}")
+        if self.host not in ("127.0.0.1", "localhost"):
+            print(f"      Network: {lan_url}")
+            print(f"      Access code: {self.access_token}")
+        else:
+            print("      Network: disabled by default")
+            print("      Use --host=0.0.0.0 or --network to allow phone/LAN access.")
         print("[3/4] Attempting to open your default browser...")
         try:
-            opened = webbrowser.open(local_url)
+            opened = webbrowser.open(launch_url)
             if opened:
                 print("[ok] Browser launch request sent successfully.")
             else:
                 print("[warn] Browser did not open automatically.")
-                print(f"       Open this address manually: {local_url}")
+                print(f"       Open this address manually: {launch_url}")
         except Exception as exc:
             print(f"[warn] Browser launch failed: {exc}")
-            print(f"       Open this address manually: {local_url}")
+            print(f"       Open this address manually: {launch_url}")
 
         print("[4/4] Server is ready. Press Ctrl+C to stop.")
         try:

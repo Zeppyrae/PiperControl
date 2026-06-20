@@ -1,7 +1,19 @@
 const q = id => document.getElementById(id);
 const setStatus = msg => q('status').textContent = msg;
+const ACCESS_TOKEN_KEY = 'piper_access_token';
 let allHistory = [];
+let allAudioClips = [];
 let remoteUrl = '';
+let networkEnabled = false;
+let authRequired = false;
+let authToken = '';
+let clipCompletionState = {
+  prefix: '',
+  matches: [],
+  index: -1,
+  start: -1,
+  cursor: -1,
+};
 
 const createItemRow = (label, title, actions) => {
   const item = document.createElement('div');
@@ -36,6 +48,75 @@ const createEmptyState = (text) => {
   return empty;
 };
 
+const apiFetch = (url, options = {}) => {
+  const headers = new Headers(options.headers || {});
+  if (authToken) {
+    headers.set('X-Access-Token', authToken);
+  }
+  return fetch(url, {
+    ...options,
+    headers,
+  });
+};
+
+const setSelectOptions = (select, values, emptyLabel) => {
+  select.replaceChildren();
+  if (!values.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = emptyLabel;
+    select.appendChild(option);
+    select.disabled = true;
+    return;
+  }
+
+  select.disabled = false;
+  values.forEach(value => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+};
+
+const normalizeClipToken = (value) => value.trim().replace(/^!+/, '').toLowerCase();
+
+const formatClipCommand = (clip) => (clip.startsWith('!') ? clip : `!${clip}`);
+
+const resetClipCompletion = () => {
+  clipCompletionState = {
+    prefix: '',
+    matches: [],
+    index: -1,
+    start: -1,
+    cursor: -1,
+  };
+  q('text')._clipCompletionDirection = 1;
+};
+
+const readAuthTokenFromLocation = () => {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('token');
+  if (token) {
+    authToken = token.trim();
+    localStorage.setItem(ACCESS_TOKEN_KEY, authToken);
+    params.delete('token');
+    const cleanQuery = params.toString();
+    const nextUrl = `${window.location.pathname}${cleanQuery ? `?${cleanQuery}` : ''}${window.location.hash}`;
+    window.history.replaceState({}, document.title, nextUrl);
+    return;
+  }
+
+  authToken = localStorage.getItem(ACCESS_TOKEN_KEY) || '';
+};
+
+const getClipMatches = (prefix) => {
+  const needle = normalizeClipToken(prefix);
+  if (!needle) return [];
+
+  return allAudioClips.filter(clip => normalizeClipToken(clip).startsWith(needle));
+};
+
 const toggleSection = (id) => q(id).classList.toggle('open');
 const toggleSidebar = () => {
   q('sidebar').classList.toggle('open');
@@ -64,9 +145,97 @@ const showRemoteAccess = () => {
     setStatus('Remote URL not ready yet');
     return;
   }
+  if (!networkEnabled) {
+    enablePhoneAccess();
+    return;
+  }
+  if (authRequired && !authToken) {
+    showLogin('Enter the access code to open network control.');
+    return;
+  }
   q('remote-modal').classList.add('open');
 };
 const closeRemoteAccess = () => q('remote-modal').classList.remove('open');
+const enablePhoneAccess = async () => {
+  try {
+    const res = await apiFetch('/api/network/enable', { method: 'POST' });
+    if (!res.ok) {
+      throw new Error('Failed to enable phone access');
+    }
+    const data = await res.json();
+    authToken = data.access_token || authToken;
+    localStorage.setItem(ACCESS_TOKEN_KEY, authToken);
+    networkEnabled = true;
+    authRequired = true;
+    updateRemoteButton();
+    remoteUrl = `http://${data.local_ip}:${data.port}`;
+    q('remote_info').textContent = remoteUrl;
+    q('remote_open').href = remoteUrl;
+    q('access_code_display').textContent = authToken;
+    q('access_code_display').title = authToken;
+    setStatus('Phone access enabled');
+    q('remote-modal').classList.add('open');
+  } catch (error) {
+    setStatus(error.message || 'Failed to enable phone access');
+  }
+};
+const disablePhoneAccess = async () => {
+  try {
+    const res = await apiFetch('/api/network/disable', { method: 'POST' });
+    if (!res.ok) {
+      throw new Error('Failed to disable phone access');
+    }
+    const data = await res.json();
+    networkEnabled = false;
+    authRequired = false;
+    authToken = '';
+    localStorage.removeItem(ACCESS_TOKEN_KEY);
+    updateRemoteButton();
+    q('access_code_display').textContent = 'Not required';
+    q('access_code_display').title = 'Not required';
+    remoteUrl = `http://${data.local_ip}:${data.port}`;
+    q('remote_info').textContent = remoteUrl;
+    q('remote_open').href = remoteUrl;
+    closeRemoteAccess();
+    setStatus('Phone access disabled');
+  } catch (error) {
+    setStatus(error.message || 'Failed to disable phone access');
+  }
+};
+const showLogin = (message = 'Enter the access code to unlock network control') => {
+  q('login-message').textContent = message;
+  q('access_code').value = authToken;
+  q('login-error').style.display = 'none';
+  q('login-error').textContent = '';
+  q('login-modal').classList.add('open');
+  setTimeout(() => q('access_code').focus(), 0);
+};
+const closeLogin = () => q('login-modal').classList.remove('open');
+const connectWithToken = async () => {
+  const token = q('access_code').value.trim();
+  if (!token) {
+    setStatus('Enter an access code first');
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/status', {
+      headers: { 'X-Access-Token': token },
+    });
+    if (!res.ok) {
+      throw new Error('Access code not accepted');
+    }
+
+    authToken = token;
+    localStorage.setItem(ACCESS_TOKEN_KEY, token);
+    closeLogin();
+    setStatus('Access granted');
+    await loadState();
+  } catch (error) {
+    q('login-error').textContent = error.message || 'Failed to verify access code';
+    q('login-error').style.display = 'block';
+  }
+};
 const copyRemoteUrl = async () => {
   if (!remoteUrl) {
     setStatus('Remote URL not ready yet');
@@ -78,6 +247,11 @@ const copyRemoteUrl = async () => {
   } catch (error) {
     setStatus(error.message || 'Failed to copy URL');
   }
+};
+
+const updateRemoteButton = () => {
+  q('remote-btn').textContent = networkEnabled ? 'Phone Access' : 'Enable Phone Access';
+  q('remote-disable-row').style.display = networkEnabled ? 'flex' : 'none';
 };
 
 const handleDrop = (e) => {
@@ -116,7 +290,7 @@ const updateLabel = id => {
 
 const loadHistory = async () => {
   try {
-    const res = await fetch('/api/history');
+    const res = await apiFetch('/api/history');
     const data = await res.json();
     allHistory = Array.isArray(data.history) ? data.history : [];
     renderHistory(allHistory);
@@ -150,7 +324,7 @@ q('history-search').addEventListener('input', (e) => {
 
 const loadFavorites = async () => {
   try {
-    const res = await fetch('/api/favorites');
+    const res = await apiFetch('/api/favorites');
     const data = await res.json();
     const list = q('favorites-list');
     list.replaceChildren();
@@ -180,7 +354,7 @@ const loadFavorites = async () => {
 
 const loadPresets = async () => {
   try {
-    const res = await fetch('/api/presets');
+    const res = await apiFetch('/api/presets');
     const data = await res.json();
     const list = q('presets-list');
     list.replaceChildren();
@@ -210,7 +384,7 @@ const loadPresets = async () => {
 
 const loadRecents = async () => {
   try {
-    const res = await fetch('/api/recents');
+    const res = await apiFetch('/api/recents');
     const data = await res.json();
 
     const recentVoices = q('recent-voices');
@@ -277,17 +451,30 @@ const loadState = async () => {
   q('enterToSpeak').checked = localStorage.getItem('enterToSpeak') === 'true';
 
   try {
-    const res = await fetch('/api/status');
+    const res = await apiFetch('/api/status');
+    if (res.status === 401) {
+      authRequired = true;
+      showLogin('This network session needs the access code from the host machine.');
+      setStatus('Access code required');
+      return;
+    }
     const body = await res.json();
     const settings = body.settings;
     const voices = body.voices;
     const sinks = body.sinks;
+    const clips = body.clips || [];
+    allAudioClips = clips;
+    networkEnabled = Boolean(body.network_enabled);
+    authRequired = Boolean(body.auth_required);
+    updateRemoteButton();
 
-    q('voice').innerHTML = voices.map(v => `<option value="${v}">${v}</option>`).join('');
+    setSelectOptions(q('voice'), voices, 'No voices found');
     if (settings.voice) q('voice').value = settings.voice;
 
-    q('output_device').innerHTML = sinks.map(s => `<option value="${s}">${s}</option>`).join('');
+    setSelectOptions(q('output_device'), sinks, 'No devices found');
     if (settings.output_device) q('output_device').value = settings.output_device;
+
+    setSelectOptions(q('audio_clip'), clips, 'No audio clips found');
 
     q('speed').value = settings.speed ?? 1.0;
     q('noise').value = settings.noise ?? 0.5;
@@ -300,6 +487,8 @@ const loadState = async () => {
     remoteUrl = `http://${body.local_ip}:${body.port}`;
     q('remote_info').textContent = remoteUrl;
     q('remote_open').href = remoteUrl;
+    q('access_code_display').textContent = authRequired ? (authToken || 'Use the terminal code') : 'Not required';
+    q('access_code_display').title = authRequired ? (authToken || 'Use the terminal code') : 'Not required';
 
     await loadHistory();
     await loadFavorites();
@@ -318,9 +507,84 @@ const loadState = async () => {
 });
 
 q('text').addEventListener('input', updateCounter);
+q('text').addEventListener('input', resetClipCompletion);
 q('enterToSpeak').addEventListener('change', () => {
   localStorage.setItem('enterToSpeak', q('enterToSpeak').checked ? 'true' : 'false');
 });
+
+const insertClip = () => {
+  const clip = q('audio_clip').value;
+  if (!clip) {
+    setStatus('Choose an audio clip first');
+    return;
+  }
+
+  const command = formatClipCommand(clip);
+  insertText(command);
+  setStatus(`Inserted ${command}`);
+};
+
+q('audio_clip_insert').addEventListener('click', insertClip);
+
+const completeClipCommand = () => {
+  const textEl = q('text');
+  const value = textEl.value;
+  const start = textEl.selectionStart ?? value.length;
+  const end = textEl.selectionEnd ?? start;
+  if (start !== end) {
+    return false;
+  }
+
+  const textBefore = value.slice(0, start);
+  const match = textBefore.match(/(^|\s)(!\S*)$/);
+  if (!match) {
+    resetClipCompletion();
+    return false;
+  }
+
+  const token = match[2];
+  const tokenStart = start - token.length;
+  const prefix = normalizeClipToken(token);
+  const matches = getClipMatches(prefix);
+  if (!matches.length) {
+    setStatus(`No clip matches ${token}`);
+    resetClipCompletion();
+    return true;
+  }
+
+  const continuing =
+    clipCompletionState.prefix === prefix &&
+    clipCompletionState.start === tokenStart &&
+    clipCompletionState.cursor === start &&
+    clipCompletionState.matches.length === matches.length;
+
+  const direction = q('text')._clipCompletionDirection || 1;
+  const index = continuing
+    ? (clipCompletionState.index + direction + matches.length) % matches.length
+    : (direction > 0 ? 0 : matches.length - 1);
+  const clip = matches[index];
+  const command = formatClipCommand(clip);
+  const addSpace = matches.length === 1;
+  const replacement = addSpace ? `${command} ` : command;
+
+  textEl.value = value.slice(0, tokenStart) + replacement + value.slice(end);
+  const caret = tokenStart + replacement.length;
+  textEl.setSelectionRange(caret, caret);
+  textEl.focus();
+  updateCounter();
+  clipCompletionState = {
+    prefix,
+    matches,
+    index,
+    start: tokenStart,
+    cursor: caret,
+  };
+  q('text')._clipCompletionDirection = direction;
+  setStatus(matches.length === 1
+    ? `Completed ${token} → ${command}`
+    : `Clip match ${index + 1} of ${matches.length}: ${command}${direction < 0 ? ' (backward)' : ''}`);
+  return true;
+};
 
 const onSpeak = async () => {
   try {
@@ -337,7 +601,7 @@ const onSpeak = async () => {
       const lines = text.split('\n').filter(line => line.trim());
       for (const line of lines) {
         const body = { ...readSettings(), text: line };
-        const res = await fetch('/api/speak', {
+        const res = await apiFetch('/api/speak', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
@@ -349,7 +613,7 @@ const onSpeak = async () => {
       await loadHistory();
     } else {
       const body = { ...readSettings(), text };
-      const res = await fetch('/api/speak', {
+      const res = await apiFetch('/api/speak', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -371,7 +635,7 @@ const onSpeak = async () => {
 };
 
 const onStop = async () => {
-  await fetch('/api/stop', { method: 'POST' });
+  await apiFetch('/api/stop', { method: 'POST' });
   setStatus('Stopped');
 };
 
@@ -390,7 +654,7 @@ const saveFavorite = async () => {
   }
   const name = prompt('Favorite name:', '');
   if (!name) return;
-  const res = await fetch('/api/favorite/add', {
+  const res = await apiFetch('/api/favorite/add', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, text }),
@@ -405,7 +669,7 @@ const saveFavorite = async () => {
 
 const removeFavorite = async (name) => {
   if (!confirm('Remove this favorite?')) return;
-  const res = await fetch('/api/favorite/remove', {
+  const res = await apiFetch('/api/favorite/remove', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
@@ -419,7 +683,7 @@ const removeFavorite = async (name) => {
 const savePreset = async () => {
   const name = prompt('Preset name:', '');
   if (!name) return;
-  const res = await fetch('/api/preset/save', {
+  const res = await apiFetch('/api/preset/save', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, ...readSettings() }),
@@ -431,7 +695,7 @@ const savePreset = async () => {
 };
 
 const loadPreset = async (name) => {
-  const res = await fetch('/api/preset/load', {
+  const res = await apiFetch('/api/preset/load', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
@@ -451,7 +715,7 @@ const loadPreset = async (name) => {
 
 const deletePreset = async (name) => {
   if (!confirm('Delete this preset?')) return;
-  const res = await fetch('/api/preset/delete', {
+  const res = await apiFetch('/api/preset/delete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
@@ -464,7 +728,7 @@ const deletePreset = async (name) => {
 
 const clearHistory = async () => {
   if (!confirm('Clear all history?')) return;
-  const res = await fetch('/api/history/clear', { method: 'POST' });
+  const res = await apiFetch('/api/history/clear', { method: 'POST' });
   if (res.ok) {
     setStatus('History cleared');
     loadHistory();
@@ -472,7 +736,7 @@ const clearHistory = async () => {
 };
 
 const saveSettings = async () => {
-  const res = await fetch('/api/settings', {
+  const res = await apiFetch('/api/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(readSettings()),
@@ -481,7 +745,7 @@ const saveSettings = async () => {
 };
 
 const updateSettings = async () => {
-  await fetch('/api/settings', {
+  await apiFetch('/api/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(readSettings()),
@@ -490,7 +754,7 @@ const updateSettings = async () => {
 
 const onShutdown = async () => {
   if (!confirm('Shutdown server?')) return;
-  await fetch('/api/shutdown', { method: 'POST' });
+  await apiFetch('/api/shutdown', { method: 'POST' });
   setStatus('Server shutting down...');
 };
 
@@ -515,6 +779,21 @@ const bindUiEvents = () => {
   q('help-close-btn').addEventListener('click', closeHelp);
   q('remote-close-btn').addEventListener('click', closeRemoteAccess);
   q('remote-copy-btn').addEventListener('click', copyRemoteUrl);
+  q('remote-copy-code-btn').addEventListener('click', async () => {
+    if (!authToken) {
+      setStatus('No access code available yet');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(authToken);
+      setStatus('Access code copied');
+    } catch (error) {
+      setStatus(error.message || 'Failed to copy access code');
+    }
+  });
+  q('login-connect-btn').addEventListener('click', connectWithToken);
+  q('login-cancel-btn').addEventListener('click', closeLogin);
+  q('remote-disable-btn').addEventListener('click', disablePhoneAccess);
   q('text').addEventListener('drop', handleDrop);
   q('text').addEventListener('dragover', event => event.preventDefault());
   q('text').addEventListener('dragenter', event => event.preventDefault());
@@ -529,10 +808,19 @@ const bindUiEvents = () => {
 
 window.addEventListener('DOMContentLoaded', () => {
   bindUiEvents();
+  readAuthTokenFromLocation();
   loadState();
   updateCounter();
 
   q('text').addEventListener('keydown', event => {
+    if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      q('text')._clipCompletionDirection = event.shiftKey ? -1 : 1;
+      if (completeClipCommand()) {
+        event.preventDefault();
+      }
+      return;
+    }
+
     if (
       event.key === 'Enter' &&
       q('enterToSpeak').checked &&

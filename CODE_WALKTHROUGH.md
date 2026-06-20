@@ -41,9 +41,16 @@ Main files:
 - `static/index.html` - browser UI markup
 - `static/styles.css` - browser UI styling
 - `static/app.js` - browser UI behavior
+- `audio/` - optional audio clips played with `!clipname`
 - `engine.py` - launches Piper TTS and audio playback
 - `settings.py` - loads and saves config values
 - `utils.py` - helper functions for voices and audio sinks
+- The server binds to `127.0.0.1` by default; use `--host=0.0.0.0` or
+  `--network` only when you intentionally want LAN/phone access
+- LAN access is gated by a random access code that is printed at startup or
+  shown when you press the Phone Access button, and the same panel can turn
+  LAN mode back off
+- The network URL prefers a real private LAN address instead of a VPN/WARP one
 
 Legacy note:
 
@@ -195,6 +202,7 @@ Returns JSON containing:
 
 - current settings
 - available voices from `voices/`
+- available audio clips from `audio/`
 - available audio sinks
 - local IP
 - current port
@@ -478,7 +486,7 @@ and maintain.
 The page is made of a few clear pieces:
 
 - a sidebar for presets, recents, history, favorites
-- a main card with text input and controls
+- a main card with text input, clip dropdown, and controls
 - modals for help and phone access
 - a mobile action bar
 
@@ -562,7 +570,12 @@ It:
 2. fetches `/api/status`
 3. fills dropdowns and sliders
 4. stores the remote access URL
-5. loads history, favorites, presets, and recents
+5. loads history, favorites, presets, recents, and clips
+
+The clip picker uses the browser's built-in type-ahead behavior, so typing a
+letter jumps to matching clips. Pressing `Tab` or `Shift+Tab` in the text box
+cycles through matching `!clip` commands from the audio list, and the green
+arrow button inserts `!clipname` into the main text box.
 
 This is the main synchronization step between backend and frontend.
 
@@ -590,6 +603,12 @@ Fetches `/api/recents`.
 
 This renders buttons for recent voices and recent output devices.
 
+### `insertClip()`
+
+Puts `!clipname` into the text box using the selected clip from `audio/`.
+
+That keeps the normal Speak button as the single action for both text and clips.
+
 ## Actions That Call The Backend
 
 ### `onSpeak()`
@@ -606,6 +625,8 @@ It:
 6. clears the box if auto-clear is enabled
 
 In batch mode, it sends one request per line.
+
+If the text starts with `!`, the backend treats it as an audio clip command.
 
 ### `onStop()`
 
@@ -866,6 +887,12 @@ Returns the absolute `voices/` directory path next to the script.
 This keeps the app portable because it always looks for voice models beside the
 code instead of in a hard-coded system path.
 
+### `get_audio_dir()`
+
+Returns the absolute `audio/` directory path next to the script.
+
+That is where optional one-shot clips live.
+
 ### `list_voices(voice_dir=None)`
 
 Scans the voice directory and returns all files ending in `.onnx`, with the
@@ -897,6 +924,18 @@ Then it parses sink names from the output.
 
 It always includes `"default"` first, so the user has a safe fallback even if
 the audio tools cannot list any specific devices.
+
+### `list_audio_clips(audio_dir=None)`
+
+Scans the `audio/` folder and returns clip names without extensions.
+
+Those names become the dropdown entries and the valid `!clipname` commands.
+
+Only a small set of formats is included on purpose, so the app does not need to
+create conversion files or do extra work on every play.
+
+The audio clips are local-only files and are ignored by git, just like the
+voice model files in `voices/`.
 
 ## Historical Note
 

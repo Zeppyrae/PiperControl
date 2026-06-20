@@ -84,7 +84,7 @@
         <button id="remote-btn" class="secondary small" type="button" title="Show phone access address">Phone Access</button>
       </div>
 
-      <textarea id="text" placeholder="Type your text here... (Ctrl+Enter to speak, Escape to stop)"></textarea>
+      <textarea id="text" placeholder="Type your text here... (Ctrl+Enter to speak, !clipname to play a clip, Escape to stop)"></textarea>
       <div class="counter">
         <span id="char-count">0</span> characters | <span id="word-count">0</span> words | <span id="read-time">~0 sec</span> read
       </div>
@@ -103,6 +103,14 @@
         <div>
           <label for="output_device">Output Device</label>
           <select id="output_device"></select>
+        </div>
+        <div>
+          <label for="audio_clip">Audio Clip</label>
+          <div class="audio-clip-row">
+            <select id="audio_clip"></select>
+            <button id="audio_clip_insert" class="clip-insert-btn" type="button" title="Insert selected clip into the text box">↥</button>
+          </div>
+          <div style="margin-top:6px; color:var(--text-muted); font-size:0.85rem;">Type a few letters to jump in the picker, press <kbd>Tab</kbd> to complete a clip name in the text box, then click the arrow to insert <code>!clipname</code>.</div>
         </div>
       </div>
 
@@ -173,6 +181,10 @@
         <div class="shortcut-key">Ctrl+B</div>
         <div>Toggle batch mode</div>
       </div>
+      <div class="shortcut">
+        <div class="shortcut-key">!clipname</div>
+        <div>Play an audio clip from the <code>audio/</code> folder</div>
+      </div>
     </div>
   </div>
 </div>
@@ -182,11 +194,32 @@
     <span id="remote-close-btn" class="modal-close">&times;</span>
     <div class="remote-access">
       <div class="remote-access-title">Phone Access</div>
+      <div id="remote-lock-note" style="margin-bottom:8px; color:var(--text-muted); font-size:0.9rem;">Network access is locked by the access code printed in the terminal.</div>
+      <div class="remote-access-row" style="margin-bottom:8px;">
+        <div class="remote-access-url" id="access_code_display">Loading...</div>
+        <button id="remote-copy-code-btn" class="secondary small" type="button">Copy Code</button>
+      </div>
       <div class="remote-access-row">
         <div id="remote_info" class="remote-access-url">Loading...</div>
         <a id="remote_open" class="secondary small" href="#" target="_blank" rel="noopener noreferrer">Open</a>
         <button id="remote-copy-btn" class="secondary small" type="button">Copy IP</button>
       </div>
+      <div class="remote-access-row" style="margin-top:8px; display:none;" id="remote-disable-row">
+        <button id="remote-disable-btn" class="danger small" type="button">Disable Phone Access</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="login-modal" class="modal">
+  <div class="modal-content login-modal">
+    <h2>Network Login</h2>
+    <p id="login-message" style="color:var(--text-muted);">Enter the access code to unlock network control.</p>
+    <input id="access_code" type="text" class="search-box" placeholder="Access code" autocomplete="one-time-code" spellcheck="false">
+    <div id="login-error" style="display:none; margin-top:8px; color:var(--danger); font-size:0.9rem;"></div>
+    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px;">
+      <button id="login-cancel-btn" class="secondary small" type="button">Cancel</button>
+      <button id="login-connect-btn" class="primary small" type="button">Unlock</button>
     </div>
   </div>
 </div>

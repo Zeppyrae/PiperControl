@@ -157,6 +157,28 @@ body {
   font-size: 0.85rem;
 }
 
+.audio-clip-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.clip-insert-btn {
+  min-width: 42px;
+  width: 42px;
+  padding: 8px 0;
+  background: #2dbd62;
+  color: #fff;
+  font-size: 1rem;
+  line-height: 1;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15) inset;
+}
+
+.clip-insert-btn:hover {
+  background: #3bd571;
+}
+
 .recent-buttons {
   display: flex;
   flex-wrap: wrap;
@@ -358,6 +380,10 @@ button:hover { transform: translateY(-2px); }
   width: min(500px, calc(100vw - 32px));
 }
 
+.login-modal {
+  width: min(420px, calc(100vw - 32px));
+}
+
 .modal-close {
   float: right;
   cursor: pointer;
@@ -456,6 +482,10 @@ button:hover { transform: translateY(-2px); }
   .row {
     grid-template-columns: 1fr;
     gap: 12px;
+  }
+
+  .audio-clip-row {
+    grid-template-columns: 1fr 48px;
   }
 
   .controls {

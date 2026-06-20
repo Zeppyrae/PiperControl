@@ -22,6 +22,12 @@ voices/*.json
 !voices/README.md
 !voices/.gitkeep
 
+# Local audio clips
+audio/*
+# But keep the README for setup instructions
+!audio/README.md
+!audio/.gitkeep
+
 # Runtime data
 history.json
 favorites.json
